@@ -11,6 +11,7 @@ use crate::validation;
 #[pyfunction]
 #[pyo3(signature = (payload, key, algorithm = "HS256", headers = None))]
 pub fn encode(
+    py: Python<'_>,
     payload: &Bound<'_, PyAny>,
     key: &Bound<'_, PyAny>,
     algorithm: &str,
@@ -26,7 +27,8 @@ pub fn encode(
     apply_headers(&mut header, headers, algorithm)?;
     let encoding_key = encoding_key_from_py(key, algorithm)?;
 
-    jwt_encode(&header, &claims, &encoding_key).map_err(errors::from_jwt_encode_error)
+    py.detach(|| jwt_encode(&header, &claims, &encoding_key))
+        .map_err(errors::from_jwt_encode_error)
 }
 
 #[pyfunction]
@@ -60,7 +62,8 @@ pub fn decode(
     )?;
     let decoding_key = decoding_key_from_py(key, &decode_validation.algorithms)?;
 
-    let token_data = jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation)
+    let token_data = py
+        .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
         .map_err(errors::from_jwt_decode_error)?;
 
     json_to_py(py, &token_data.claims)

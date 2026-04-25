@@ -1,72 +1,76 @@
-use jsonwebtoken::jwk::Jwk;
 use jsonwebtoken::{Algorithm, DecodingKey as JwtDecodingKey, EncodingKey as JwtEncodingKey};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use zeroize::Zeroize;
 
 use crate::algorithms::{ensure_algorithm_family, ensure_single_family, KeyFamily};
 use crate::claims;
 use crate::errors;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum KeyKind {
-    Secret,
-    RsaPem,
-    EcPem,
-    EdPem,
-    Jwk,
+#[derive(Debug)]
+struct EncodingKeyMaterial {
+    family: KeyFamily,
+    key: JwtEncodingKey,
 }
 
 #[derive(Debug)]
-struct KeyMaterial {
-    kind: KeyKind,
+struct DecodingKeyMaterial {
     family: KeyFamily,
-    bytes: Vec<u8>,
-}
-
-impl Drop for KeyMaterial {
-    fn drop(&mut self) {
-        self.bytes.zeroize();
-    }
+    key: JwtDecodingKey,
 }
 
 #[pyclass(module = "oxyjwt._oxyjwt")]
 pub struct EncodingKey {
-    material: KeyMaterial,
+    material: EncodingKeyMaterial,
 }
 
 #[pyclass(module = "oxyjwt._oxyjwt")]
 pub struct DecodingKey {
-    material: KeyMaterial,
+    material: DecodingKeyMaterial,
 }
 
 #[pymethods]
 impl EncodingKey {
     #[staticmethod]
     pub fn from_secret(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(secret)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::Secret, KeyFamily::Hmac, bytes_from_py(secret)?),
+            material: EncodingKeyMaterial::new(
+                KeyFamily::Hmac,
+                JwtEncodingKey::from_secret(&bytes),
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_rsa_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::RsaPem, KeyFamily::Rsa, bytes_from_py(pem)?),
+            material: EncodingKeyMaterial::new(
+                KeyFamily::Rsa,
+                JwtEncodingKey::from_rsa_pem(&bytes).map_err(errors::from_jwt_encode_error)?,
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_ec_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::EcPem, KeyFamily::Ec, bytes_from_py(pem)?),
+            material: EncodingKeyMaterial::new(
+                KeyFamily::Ec,
+                JwtEncodingKey::from_ec_pem(&bytes).map_err(errors::from_jwt_encode_error)?,
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_ed_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::EdPem, KeyFamily::Ed, bytes_from_py(pem)?),
+            material: EncodingKeyMaterial::new(
+                KeyFamily::Ed,
+                JwtEncodingKey::from_ed_pem(&bytes).map_err(errors::from_jwt_encode_error)?,
+            ),
         })
     }
 
@@ -79,29 +83,45 @@ impl EncodingKey {
 impl DecodingKey {
     #[staticmethod]
     pub fn from_secret(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(secret)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::Secret, KeyFamily::Hmac, bytes_from_py(secret)?),
+            material: DecodingKeyMaterial::new(
+                KeyFamily::Hmac,
+                JwtDecodingKey::from_secret(&bytes),
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_rsa_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::RsaPem, KeyFamily::Rsa, bytes_from_py(pem)?),
+            material: DecodingKeyMaterial::new(
+                KeyFamily::Rsa,
+                JwtDecodingKey::from_rsa_pem(&bytes).map_err(errors::from_jwt_decode_error)?,
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_ec_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::EcPem, KeyFamily::Ec, bytes_from_py(pem)?),
+            material: DecodingKeyMaterial::new(
+                KeyFamily::Ec,
+                JwtDecodingKey::from_ec_pem(&bytes).map_err(errors::from_jwt_decode_error)?,
+            ),
         })
     }
 
     #[staticmethod]
     pub fn from_ed_pem(pem: &Bound<'_, PyAny>) -> PyResult<Self> {
+        let bytes = bytes_from_py(pem)?;
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::EdPem, KeyFamily::Ed, bytes_from_py(pem)?),
+            material: DecodingKeyMaterial::new(
+                KeyFamily::Ed,
+                JwtDecodingKey::from_ed_pem(&bytes).map_err(errors::from_jwt_decode_error)?,
+            ),
         })
     }
 
@@ -115,11 +135,14 @@ impl DecodingKey {
                 .map_err(|err| errors::invalid_key(format!("invalid JWK value: {err}")))?
         };
 
-        serde_json::from_str::<Jwk>(&raw)
+        let jwk = serde_json::from_str(&raw)
             .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?;
 
         Ok(Self {
-            material: KeyMaterial::new(KeyKind::Jwk, KeyFamily::Jwk, raw.into_bytes()),
+            material: DecodingKeyMaterial::new(
+                KeyFamily::Jwk,
+                JwtDecodingKey::from_jwk(&jwk).map_err(errors::from_jwt_decode_error)?,
+            ),
         })
     }
 
@@ -128,31 +151,20 @@ impl DecodingKey {
     }
 }
 
-impl KeyMaterial {
-    fn new(kind: KeyKind, family: KeyFamily, bytes: Vec<u8>) -> Self {
-        Self {
-            kind,
-            family,
-            bytes,
-        }
+impl EncodingKeyMaterial {
+    fn new(family: KeyFamily, key: JwtEncodingKey) -> Self {
+        Self { family, key }
     }
 
     fn encoding_key(&self, algorithm: Algorithm) -> PyResult<JwtEncodingKey> {
         ensure_algorithm_family(algorithm, self.family)?;
+        Ok(self.key.clone())
+    }
+}
 
-        match self.kind {
-            KeyKind::Secret => Ok(JwtEncodingKey::from_secret(&self.bytes)),
-            KeyKind::RsaPem => {
-                JwtEncodingKey::from_rsa_pem(&self.bytes).map_err(errors::from_jwt_encode_error)
-            }
-            KeyKind::EcPem => {
-                JwtEncodingKey::from_ec_pem(&self.bytes).map_err(errors::from_jwt_encode_error)
-            }
-            KeyKind::EdPem => {
-                JwtEncodingKey::from_ed_pem(&self.bytes).map_err(errors::from_jwt_encode_error)
-            }
-            KeyKind::Jwk => Err(errors::invalid_key("JWK cannot be used for encoding")),
-        }
+impl DecodingKeyMaterial {
+    fn new(family: KeyFamily, key: JwtDecodingKey) -> Self {
+        Self { family, key }
     }
 
     fn decoding_key(&self, algorithms: &[Algorithm]) -> PyResult<JwtDecodingKey> {
@@ -166,25 +178,7 @@ impl KeyMaterial {
             }
         }
 
-        match self.kind {
-            KeyKind::Secret => Ok(JwtDecodingKey::from_secret(&self.bytes)),
-            KeyKind::RsaPem => {
-                JwtDecodingKey::from_rsa_pem(&self.bytes).map_err(errors::from_jwt_decode_error)
-            }
-            KeyKind::EcPem => {
-                JwtDecodingKey::from_ec_pem(&self.bytes).map_err(errors::from_jwt_decode_error)
-            }
-            KeyKind::EdPem => {
-                JwtDecodingKey::from_ed_pem(&self.bytes).map_err(errors::from_jwt_decode_error)
-            }
-            KeyKind::Jwk => {
-                let raw = std::str::from_utf8(&self.bytes)
-                    .map_err(|err| errors::invalid_key(format!("invalid JWK bytes: {err}")))?;
-                let jwk = serde_json::from_str::<Jwk>(raw)
-                    .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?;
-                JwtDecodingKey::from_jwk(&jwk).map_err(errors::from_jwt_decode_error)
-            }
-        }
+        Ok(self.key.clone())
     }
 }
 
