@@ -2,14 +2,11 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-COPY pyproject.toml README.md mkdocs.yml ./
+COPY requirements.txt mkdocs.yml README.md ./
 COPY docs ./docs
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
-    && python -m pip install --no-cache-dir \
-        "mkdocs>=1.6" \
-        "mkdocs-material>=9.5" \
-        "pymdown-extensions>=10.8" \
+    && python -m pip install --no-cache-dir -r requirements.txt \
     && mkdocs build --strict --site-dir /site
 
 FROM nginx:1.27-alpine

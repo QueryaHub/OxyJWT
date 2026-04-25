@@ -6,24 +6,24 @@ This project is currently alpha software.
 
 ## Documentation
 
-The full documentation is written with MkDocs and lives in [`docs/`](docs/):
+The full documentation is written with MkDocs and lives in [`docs-site/`](docs-site/) as a standalone site:
 
-- [Getting Started](docs/getting-started.md)
-- [Security](docs/security.md)
-- [API Reference](docs/api-reference.md)
+- [Getting Started](docs-site/docs/getting-started.md)
+- [Security](docs-site/docs/security.md)
+- [API Reference](docs-site/docs/api-reference.md)
 
 Build it locally with:
 
 ```bash
 python -m venv .venv
-.venv/bin/python -m pip install -U ".[docs]"
-.venv/bin/mkdocs serve
+.venv/bin/python -m pip install -U -r docs-site/requirements.txt
+.venv/bin/mkdocs serve -f docs-site/mkdocs.yml
 ```
 
 Or build a static documentation image for deployment:
 
 ```bash
-docker compose -f docker-compose.docs.yml up -d --build
+docker compose -f docs-site/docker-compose.yml up -d --build
 ```
 
 The documentation will be available at `http://localhost:8000`. Override the host port with `OXYJWT_DOCS_PORT=8080`.

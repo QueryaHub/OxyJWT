@@ -34,7 +34,7 @@ jobs:
         run: python -m venv .venv
 
       - name: Install Python dependencies
-        run: .venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt ".[docs]"
+        run: .venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt -r docs-site/requirements.txt
 
       - name: Rust fmt
         run: cargo fmt --manifest-path rust/Cargo.toml --check
@@ -52,4 +52,4 @@ jobs:
         run: .venv/bin/python -m pytest
 
       - name: Documentation build
-        run: .venv/bin/mkdocs build --strict
+        run: .venv/bin/mkdocs build --strict -f docs-site/mkdocs.yml

@@ -46,25 +46,25 @@ Wheels are written under `rust/target/wheels/`.
 Install docs dependencies:
 
 ```bash
-.venv/bin/python -m pip install -U ".[docs]"
+.venv/bin/python -m pip install -U -r docs-site/requirements.txt
 ```
 
 Build docs strictly:
 
 ```bash
-.venv/bin/mkdocs build --strict
+.venv/bin/mkdocs build --strict -f docs-site/mkdocs.yml
 ```
 
 Serve docs locally:
 
 ```bash
-.venv/bin/mkdocs serve
+.venv/bin/mkdocs serve -f docs-site/mkdocs.yml
 ```
 
 Build and run a static Docker image for server deployment:
 
 ```bash
-docker compose -f docker-compose.docs.yml up -d --build
+docker compose -f docs-site/docker-compose.yml up -d --build
 ```
 
 The documentation is served at `http://localhost:8000` by default. Set `OXYJWT_DOCS_PORT=8080` to use another host port.
@@ -110,12 +110,14 @@ PYO3_BUILD_EXTENSION_MODULE=1 maturin build --release --no-default-features --fe
 
 ```text
 pyproject.toml
-mkdocs.yml
+docs-site/mkdocs.yml
+docs-site/docs/
+docs-site/Dockerfile
+docs-site/docker-compose.yml
 python/oxyjwt/
 rust/
 tests/
-docs/
 scripts/
 ```
 
-The Python package exposes the public API. The Rust crate implements the native extension as `oxyjwt._oxyjwt`.
+The Python package exposes the public API. The Rust crate implements the native extension as `oxyjwt._oxyjwt`. The documentation site is self-contained under `docs-site/` so it can be moved into a separate repository later.
