@@ -36,6 +36,8 @@ cp .env.example .env
 docker compose -f docker-compose.prod.yml --env-file .env up -d --build
 ```
 
+If Compose fails because port 80 (or 443) is already in use, see **Production** / troubleshooting in [`docs-site/README.md`](docs-site/README.md).
+
 ## Installation
 
 ```bash
