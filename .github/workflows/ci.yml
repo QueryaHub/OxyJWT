@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install Python dependencies
+        run: python -m pip install -U pip maturin pytest cryptography pyjwt
+
+      - name: Rust fmt
+        run: cargo fmt --manifest-path rust/Cargo.toml --check
+
+      - name: Rust clippy
+        run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path rust/Cargo.toml
+
+      - name: Install extension
+        run: maturin develop --release
+
+      - name: Python tests
+        run: pytest

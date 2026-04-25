@@ -1,0 +1,20 @@
+[package]
+name = "oxyjwt"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+description = "Rust core for the OxyJWT Python package."
+
+[lib]
+name = "_oxyjwt"
+crate-type = ["cdylib"]
+
+[dependencies]
+base64 = "0.22"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+pyo3 = { version = "0.28", features = ["abi3-py310"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+zeroize = "1"

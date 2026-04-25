@@ -1,0 +1,45 @@
+[build-system]
+requires = ["maturin>=1.13,<2"]
+build-backend = "maturin"
+
+[project]
+name = "oxyjwt"
+version = "0.1.0"
+description = "A Python JWT library powered by a Rust core."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+  { name = "OxyJWT contributors" },
+]
+keywords = ["jwt", "jws", "rust", "pyo3", "maturin"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Rust",
+  "Topic :: Security",
+  "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = [
+  "cryptography>=42",
+  "pyjwt>=2.8",
+  "pytest>=8",
+]
+
+[project.urls]
+Repository = "https://github.com/QueryaHub/OxyJWT"
+
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "python"
+module-name = "oxyjwt._oxyjwt"
+bindings = "pyo3"
+strip = true
