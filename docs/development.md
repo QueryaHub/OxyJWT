@@ -64,9 +64,10 @@ Serve docs locally:
 Build and run a static Docker image for server deployment:
 
 ```bash
-docker build -f Dockerfile.docs -t oxyjwt-docs .
-docker run --rm -p 8000:80 oxyjwt-docs
+docker compose -f docker-compose.docs.yml up -d --build
 ```
+
+The documentation is served at `http://localhost:8000` by default. Set `OXYJWT_DOCS_PORT=8080` to use another host port.
 
 ## Compare JWT Libraries
 

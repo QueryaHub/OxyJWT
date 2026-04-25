@@ -23,9 +23,10 @@ python -m venv .venv
 Or build a static documentation image for deployment:
 
 ```bash
-docker build -f Dockerfile.docs -t oxyjwt-docs .
-docker run --rm -p 8000:80 oxyjwt-docs
+docker compose -f docker-compose.docs.yml up -d --build
 ```
+
+The documentation will be available at `http://localhost:8000`. Override the host port with `OXYJWT_DOCS_PORT=8080`.
 
 ## Installation
 

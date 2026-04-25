@@ -1,0 +1,9 @@
+services:
+  docs:
+    build:
+      context: .
+      dockerfile: Dockerfile.docs
+    image: oxyjwt-docs:latest
+    ports:
+      - "${OXYJWT_DOCS_PORT:-8000}:80"
+    restart: unless-stopped
