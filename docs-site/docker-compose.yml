@@ -5,5 +5,5 @@ services:
       dockerfile: Dockerfile
     image: oxyjwt-docs:latest
     ports:
-      - "${OXYJWT_DOCS_PORT:-8000}:80"
+      - "${OXYJWT_DOCS_PORT:-8001}:80"
     restart: unless-stopped

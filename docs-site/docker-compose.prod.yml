@@ -1,0 +1,29 @@
+services:
+  docs:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: oxyjwt-docs:latest
+    expose:
+      - "80"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - docs
+    environment:
+      ACME_EMAIL: "${ACME_EMAIL:-admin@queryahub.com}"
+      OXYJWT_DOCS_DOMAIN: "${OXYJWT_DOCS_DOMAIN:-oxyjwt.queryahub.com}"
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

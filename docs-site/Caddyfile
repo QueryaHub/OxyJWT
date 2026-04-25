@@ -1,0 +1,8 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$OXYJWT_DOCS_DOMAIN:oxyjwt.queryahub.com} {
+	encode zstd gzip
+	reverse_proxy docs:80
+}

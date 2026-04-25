@@ -29,5 +29,31 @@ docker compose up -d --build
 Override the host port with:
 
 ```bash
-OXYJWT_DOCS_PORT=8080 docker compose up -d --build
+OXYJWT_DOCS_PORT=8001 docker compose up -d --build
 ```
+
+Without an override, Docker Compose serves the static docs at `http://localhost:8001`.
+
+## Production Domain
+
+Point `oxyjwt.queryahub.com` to your server:
+
+```text
+oxyjwt.queryahub.com.  A     YOUR_SERVER_IPV4
+oxyjwt.queryahub.com.  AAAA  YOUR_SERVER_IPV6
+```
+
+Then start the production stack with Caddy. Caddy listens on ports `80` and `443` and automatically issues a Let's Encrypt certificate:
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+```
+
+The site will be available at `https://oxyjwt.queryahub.com`.
+
+Server requirements:
+
+- DNS for `oxyjwt.queryahub.com` points to this server.
+- Ports `80` and `443` are open.
+- No other service is already using ports `80` or `443`.
