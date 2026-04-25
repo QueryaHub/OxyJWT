@@ -33,6 +33,13 @@ build/
 # Maturin / packaging
 wheelhouse/
 .tox/
+site/
+
+# Benchmarks
+benchmark-results/
+bench-results/
+*.bench.json
+*.bench.md
 
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can

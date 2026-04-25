@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+.python-test-target
+benchmark-results
+bench-results
+build
+dist
+htmlcov
+rust/target
+site
+*.egg-info
+__pycache__
+*.pyc

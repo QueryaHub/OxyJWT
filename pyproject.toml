@@ -33,6 +33,17 @@ dev = [
   "pyjwt>=2.8",
   "pytest>=8",
 ]
+bench = [
+  "authlib>=1.3",
+  "cryptography>=42",
+  "pyjwt>=2.8",
+  "python-jose>=3.3",
+]
+docs = [
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+  "pymdown-extensions>=10.8",
+]
 
 [project.urls]
 Repository = "https://github.com/QueryaHub/OxyJWT"

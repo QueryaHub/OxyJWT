@@ -4,6 +4,29 @@ OxyJWT is a Python JWT/JWS library backed by a Rust core. It exposes a familiar 
 
 This project is currently alpha software.
 
+## Documentation
+
+The full documentation is written with MkDocs and lives in [`docs/`](docs/):
+
+- [Getting Started](docs/getting-started.md)
+- [Security](docs/security.md)
+- [API Reference](docs/api-reference.md)
+
+Build it locally with:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -U ".[docs]"
+.venv/bin/mkdocs serve
+```
+
+Or build a static documentation image for deployment:
+
+```bash
+docker build -f Dockerfile.docs -t oxyjwt-docs .
+docker run --rm -p 8000:80 oxyjwt-docs
+```
+
 ## Installation
 
 ```bash
@@ -13,9 +36,10 @@ pip install oxyjwt
 For local development:
 
 ```bash
-python -m pip install -U maturin pytest cryptography pyjwt
-maturin develop --release
-pytest
+python -m venv .venv
+.venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt
+.venv/bin/maturin develop --release
+.venv/bin/python -m pytest
 ```
 
 ## HMAC Example
@@ -80,6 +104,33 @@ except oxyjwt.InvalidTokenError:
 ```
 
 All package exceptions inherit from `oxyjwt.OxyJWTError`.
+
+## Benchmarks
+
+There is a small comparison script for OxyJWT, PyJWT, python-jose, and Authlib:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -U pip maturin ".[bench]"
+.venv/bin/maturin develop --release
+.venv/bin/python scripts/compare_jwt_libraries.py \
+  --algorithms all \
+  --iterations 1000 \
+  --rounds 3 \
+  --warmup 100 \
+  --json benchmark-results/all-algorithms.bench.json \
+  --markdown benchmark-results/all-algorithms.bench.md
+```
+
+The script covers HMAC, RSA, RSA-PSS, ECDSA, and EdDSA algorithms. Unsupported library/algorithm combinations are reported as `0` throughput. For a quicker smoke test, pass something like `--algorithms HS256,RS256,EdDSA --iterations 100 --rounds 1`.
+
+Benchmark outputs are ignored by git because results depend on the machine, Python version, compiler flags, and CPU state.
+
+The default Rust crypto backend is `aws_lc_rs`, chosen for stronger performance on RSA and ECDSA in local benchmarks. You can still build with `rust_crypto` for comparison:
+
+```bash
+PYO3_BUILD_EXTENSION_MODULE=1 maturin build --release --no-default-features --features rust_crypto
+```
 
 ## Security Notes
 
