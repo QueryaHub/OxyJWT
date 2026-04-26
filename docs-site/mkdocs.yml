@@ -22,6 +22,7 @@ nav:
       - Decoding tokens: usage/decoding.md
       - Keys and algorithms: usage/keys.md
       - Handling errors: usage/errors.md
+      - "Migration from PyJWT": usage/migration-pyjwt.md
   - Security: security.md
   - API Reference: api-reference.md
   - Development: development.md

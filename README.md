@@ -1,8 +1,8 @@
 # OxyJWT
 
-OxyJWT is a Python JWT/JWS library backed by a Rust core. It exposes a familiar PyJWT-like API while keeping verification explicit: decoding always requires a caller-provided `algorithms` allow-list.
+OxyJWT is a Python JWT/JWS library backed by a Rust core. The public API follows **PyJWT** for `encode`, `decode`, `decode_complete`, JWK/JWKS helpers, and the `PyJWKClient`. When **signature verification** is enabled (the default), you must pass an `algorithms` allow-list, matching common PyJWT usage. Unverified decode is available only when you explicitly set `options["verify_signature"]` to `False` (treat the payload as untrusted).
 
-This project is currently alpha software.
+This project is still **alpha** software; see the [changelog](docs-site/docs/changelog.md) for **0.2.0** breaking changes (exception hierarchy).
 
 ## Documentation
 

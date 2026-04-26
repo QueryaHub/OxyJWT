@@ -1,6 +1,6 @@
 # OxyJWT
 
-OxyJWT is a Python JWT/JWS library with a Rust implementation underneath. It gives Python code a familiar `encode` / `decode` API while keeping JWT verification explicit and hard to misconfigure.
+OxyJWT is a Python JWT/JWS library with a Rust implementation underneath. It gives Python code a **PyJWT-compatible** `encode` / `decode` / `decode_complete` API (plus JWK helpers) while keeping verified decoding tied to an explicit `algorithms` list by default. See [Migration from PyJWT](usage/migration-pyjwt.md) for exception hierarchy changes in **0.2.0**.
 
 The short version:
 
