@@ -1,9 +1,17 @@
+# PyPI: configure Trusted Publishing in https://pypi.org
+# and add a GitHub Environment named "pypi" in this repository.
+# Release: push an annotated or lightweight tag "v*". Example: git tag v0.1.1 && git push origin v0.1.1
 name: Release
 
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: pypi-release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -13,8 +21,15 @@ jobs:
   linux:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        target: [x86_64, aarch64]
+        # aws-lc-sys (aws_lc_rs) often fails to cross-compile to aarch64 in manylinux; use ring
+        # (rust_crypto) for that wheel only. Other Linux/macOS/Windows jobs keep the default.
+        include:
+          - target: x86_64
+            maturin_args: --release --out dist --compatibility pypi
+          - target: aarch64
+            maturin_args: --release --out dist --compatibility pypi --no-default-features --features rust_crypto
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,7 +39,7 @@ jobs:
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --out dist --compatibility pypi
+          args: ${{ matrix.maturin_args }}
           sccache: "true"
           manylinux: auto
       - uses: actions/upload-artifact@v4
@@ -75,11 +90,22 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - uses: PyO3/maturin-action@v1
+      - uses: actions/setup-python@v5
         with:
-          command: upload
-          args: --non-interactive --skip-existing dist/*
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload wheels and sdist to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
+          print-hash: true
