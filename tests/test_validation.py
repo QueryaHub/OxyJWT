@@ -10,7 +10,7 @@ import oxyjwt
 def test_decode_requires_algorithms() -> None:
     token = oxyjwt.encode({"exp": int(time.time()) + 60}, "secret")
 
-    with pytest.raises(oxyjwt.InvalidAlgorithmError):
+    with pytest.raises(oxyjwt.DecodeError):
         oxyjwt.decode(token, "secret", algorithms=[])
 
 
@@ -64,8 +64,7 @@ def test_required_claim_validation() -> None:
             token,
             "secret",
             algorithms=["HS256"],
-            options={"verify_exp": False},
-            require=["exp"],
+            options={"verify_exp": False, "require": ["exp"]},
         )
 
 
@@ -76,13 +75,18 @@ def test_mixed_algorithm_families_are_rejected() -> None:
         oxyjwt.decode(token, "secret", algorithms=["HS256", "RS256"])
 
 
-def test_verify_signature_false_is_rejected() -> None:
-    token = oxyjwt.encode({"exp": int(time.time()) + 60}, "secret")
-
-    with pytest.raises(oxyjwt.InvalidAlgorithmError):
-        oxyjwt.decode(
-            token,
-            "secret",
-            algorithms=["HS256"],
-            options={"verify_signature": False},
-        )
+def test_verify_signature_false_skips_signature() -> None:
+    token = oxyjwt.encode({"sub": "u", "exp": int(time.time()) + 60}, "secret")
+    out = oxyjwt.decode(
+        token,
+        "wrong-secret",
+        options={
+            "verify_signature": False,
+            "verify_exp": False,
+            "verify_nbf": False,
+            "verify_iat": False,
+            "verify_aud": False,
+            "verify_iss": False,
+        },
+    )
+    assert out["sub"] == "u"

@@ -39,5 +39,12 @@ def test_header_alg_cannot_override_algorithm() -> None:
 
 
 def test_payload_must_be_object() -> None:
-    with pytest.raises(oxyjwt.EncodeError):
+    with pytest.raises(TypeError):
         oxyjwt.encode(["not", "an", "object"], "secret")
+
+
+def test_exception_hierarchy_pyjwt_shape() -> None:
+    assert issubclass(oxyjwt.DecodeError, oxyjwt.InvalidTokenError)
+    assert issubclass(oxyjwt.InvalidSignatureError, oxyjwt.DecodeError)
+    assert issubclass(oxyjwt.ExpiredSignatureError, oxyjwt.InvalidTokenError)
+    assert oxyjwt.PyJWTError is oxyjwt.OxyJWTError
