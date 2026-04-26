@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "oxyjwt"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Python JWT library powered by a Rust core."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -22,6 +22,7 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Programming Language :: Rust",
   "Topic :: Security",
   "Typing :: Typed",
@@ -54,3 +55,6 @@ python-source = "python"
 module-name = "oxyjwt._oxyjwt"
 bindings = "pyo3"
 strip = true
+# PEP 639 / PyPI: METADATA may reference License-File: LICENSE; the file must
+# exist inside the sdist. Maturin can omit root LICENSE from the tarball otherwise.
+include = [{ path = "LICENSE", format = "sdist" }]

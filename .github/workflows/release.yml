@@ -1,6 +1,6 @@
 # PyPI: configure Trusted Publishing in https://pypi.org
 # and add a GitHub Environment named "pypi" in this repository.
-# Release: push an annotated or lightweight tag "v*". Example: git tag v0.1.1 && git push origin v0.1.1
+# Release: push an annotated or lightweight tag "v*". Example: git tag v0.2.0 && git push origin v0.2.0
 name: Release
 
 on:
