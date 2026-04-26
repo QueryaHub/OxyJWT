@@ -16,7 +16,7 @@ pub fn build_validation(
     audience: Option<&Bound<'_, PyAny>>,
     issuer: Option<&Bound<'_, PyAny>>,
     subject: Option<String>,
-    leeway: u64,
+    leeway: f64,
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<DecodeValidation> {
@@ -33,33 +33,57 @@ pub fn build_validation(
 
     let mut validation = Validation::new(parsed_algorithms[0]);
     validation.algorithms = parsed_algorithms.clone();
-    validation.leeway = leeway;
+    let leeway_u64 = if leeway <= 0.0 {
+        0u64
+    } else if leeway >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        leeway as u64
+    };
+    validation.leeway = leeway_u64;
     validation.validate_exp = option_bool(options, "verify_exp", true)?;
     validation.validate_nbf = option_bool(options, "verify_nbf", true)?;
-
-    if !option_bool(options, "verify_signature", true)? {
-        return Err(errors::invalid_algorithm(
-            "options={'verify_signature': False} is not supported; use decode_unverified explicitly",
-        ));
-    }
 
     if option_bool(options, "require_exp", false)? {
         validation.required_spec_claims.insert("exp".to_owned());
     }
 
-    for claim in require.unwrap_or_default() {
+    let mut merged_require = require.unwrap_or_default();
+    if let Some(opts) = options {
+        if !opts.is_none() {
+            if let Ok(dict) = opts.cast::<PyDict>() {
+                if let Ok(Some(req)) = dict.get_item("require") {
+                    let more: Vec<String> = req.extract().map_err(|_| {
+                        errors::decode_error("options['require'] must be a list of strings")
+                    })?;
+                    merged_require.extend(more);
+                }
+            }
+        }
+    }
+    for claim in merged_require {
         validation.required_spec_claims.insert(claim);
     }
 
+    let verify_aud = option_bool(options, "verify_aud", true)?;
     if let Some(values) = audience.map(string_or_list).transpose()? {
-        validation.validate_aud = option_bool(options, "verify_aud", true)?;
-        validation.set_audience(&values);
+        if verify_aud {
+            validation.validate_aud = true;
+            validation.set_audience(&values);
+        } else {
+            validation.validate_aud = false;
+        }
     } else {
         validation.validate_aud = false;
     }
 
-    if let Some(values) = issuer.map(string_or_list).transpose()? {
-        validation.set_issuer(&values);
+    let verify_iss = option_bool(options, "verify_iss", true)?;
+    if verify_iss {
+        if let Some(values) = issuer.map(string_or_list).transpose()? {
+            if !values.is_empty() {
+                validation.set_issuer(&values);
+            }
+        }
     }
 
     validation.sub = subject;
@@ -125,13 +149,13 @@ mod tests {
 
     #[test]
     fn requires_algorithms() {
-        assert!(build_validation(vec![], None, None, None, 0, None, None).is_err());
+        assert!(build_validation(vec![], None, None, None, 0.0, None, None).is_err());
     }
 
     #[test]
     fn rejects_none_algorithm() {
         assert!(
-            build_validation(vec!["none".to_owned()], None, None, None, 0, None, None).is_err()
+            build_validation(vec!["none".to_owned()], None, None, None, 0.0, None, None).is_err()
         );
     }
 }
