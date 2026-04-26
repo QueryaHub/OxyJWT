@@ -1,3 +1,5 @@
+# Static site (nginx). Map host 8001 → container 80, then point your existing
+# reverse proxy (TLS, certificates) at http://127.0.0.1:8001/ or the published port.
 services:
   docs:
     build:
@@ -5,5 +7,5 @@ services:
       dockerfile: Dockerfile
     image: oxyjwt-docs:latest
     ports:
-      - "${OXYJWT_DOCS_PORT:-8001}:80"
+      - "127.0.0.1:${OXYJWT_DOCS_PORT:-8001}:80"
     restart: unless-stopped

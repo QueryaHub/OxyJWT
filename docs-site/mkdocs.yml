@@ -44,3 +44,6 @@ markdown_extensions:
       permalink: true
 
 strict: true
+
+# Local preview: `mkdocs serve` listens here (same port as the Docker static site).
+dev_addr: 127.0.0.1:8001

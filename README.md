@@ -26,17 +26,7 @@ Or build a static documentation image for deployment:
 docker compose -f docs-site/docker-compose.yml up -d --build
 ```
 
-The documentation will be available at `http://localhost:8001`. Override the host port with `OXYJWT_DOCS_PORT=8002`.
-
-For production on `https://oxyjwt.queryahub.com`, use the Caddy-based stack in `docs-site/`:
-
-```bash
-cd docs-site
-cp .env.example .env
-docker compose -f docker-compose.prod.yml --env-file .env up -d --build
-```
-
-If Compose fails because port 80 (or 443) is already in use, see **Production** / troubleshooting in [`docs-site/README.md`](docs-site/README.md).
+The static site is served on **http://127.0.0.1:8001** by default. Point your own reverse proxy at that upstream for HTTPS. Details and `OXYJWT_DOCS_PORT` are in [`docs-site/README.md`](docs-site/README.md).
 
 ## Installation
 

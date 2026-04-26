@@ -67,7 +67,7 @@ Build and run a static Docker image for server deployment:
 docker compose -f docs-site/docker-compose.yml up -d --build
 ```
 
-The documentation is served at `http://localhost:8000` by default. Set `OXYJWT_DOCS_PORT=8080` to use another host port.
+The static Docker build is available at `http://127.0.0.1:8001` (see `OXYJWT_DOCS_PORT` in `docs-site/docker-compose.yml`). Local `mkdocs serve` also uses **port 8001** (`dev_addr` in `docs-site/mkdocs.yml`).
 
 ## Compare JWT Libraries
 
