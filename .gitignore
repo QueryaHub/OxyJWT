@@ -30,6 +30,9 @@ dist/
 build/
 *.egg-info/
 
+# Native extension (maturin develop)
+python/oxyjwt/*.so
+
 # Maturin / packaging
 wheelhouse/
 .tox/
