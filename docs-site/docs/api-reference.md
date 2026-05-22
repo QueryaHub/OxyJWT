@@ -158,6 +158,8 @@ class PyJWKClient:
         cache_jwk_set: bool = True,
         max_cached_keys: int = 16,
         timeout: float = 30.0,
+        max_bytes: int = 262_144,
+        require_https: bool = False,
     ) -> None: ...
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
@@ -166,6 +168,9 @@ class PyJWKClient:
 ```
 
 If `get_signing_key` does not find `kid` in the cached JWKS, it refetches the document **once** (`get_jwk_set(refresh=True)`) and retries. This supports IdP key rotation without manual cache clearing. A second miss still raises `KeyError` (no further HTTP retries).
+
+- `max_bytes` — maximum JWKS HTTP response size (default 256 KiB). Larger bodies raise `PyJWKClientError`.
+- `require_https` — when `True`, only `https://` URIs are allowed (default `False`).
 
 ## Exceptions
 

@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from collections import OrderedDict
 from typing import Any
+from urllib.parse import urlparse
 
 import orjson
 
@@ -14,6 +15,16 @@ from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 
 _DEFAULT_UA = "OxyJWT-PyJWKClient/0.3 (+https://github.com/QueryaHub/OxyJWT)"
+_DEFAULT_MAX_JWKS_BYTES = 256 * 1024
+
+
+def _read_limited_body(resp: Any, max_bytes: int) -> bytes:
+    data = resp.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise PyJWKClientError(
+            f"JWKS response exceeds max_bytes limit ({max_bytes} bytes)"
+        )
+    return data
 
 
 def _header_to_plain_dict(obj: Any) -> dict[str, Any]:
@@ -32,13 +43,24 @@ class PyJWKClient:
         cache_jwk_set: bool = True,
         max_cached_keys: int = 16,
         timeout: float = 30.0,
+        max_bytes: int = _DEFAULT_MAX_JWKS_BYTES,
+        require_https: bool = False,
     ) -> None:
         if not uri or not str(uri).strip():
             raise ValueError("uri must be a non-empty string")
         self.uri: str = str(uri).strip()
+        parsed = urlparse(self.uri)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError("uri must use http or https scheme")
+        if require_https and parsed.scheme != "https":
+            raise PyJWKClientError("JWKS uri must use https when require_https is enabled")
         self._cache_jwk_set = bool(cache_jwk_set)
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be at least 1")
+        self._max_bytes = int(max_bytes)
+        self._require_https = bool(require_https)
         self._jwk_set: PyJWKSet | None = None
         self._kid_lru: OrderedDict[str, PyJWK] = OrderedDict()
 
@@ -51,7 +73,7 @@ class PyJWKClient:
         ctx = ssl.create_default_context()
         try:
             with urllib.request.urlopen(req, timeout=self.timeout, context=ctx) as resp:
-                return resp.read()
+                return _read_limited_body(resp, self._max_bytes)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise PyJWKClientConnectionError(str(e) or type(e).__name__) from e
 

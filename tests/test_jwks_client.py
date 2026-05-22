@@ -251,6 +251,51 @@ def test_jwks_client_explicit_refresh_loads_rotated_keys() -> None:
     assert _RotatingJWKHandler.request_count == 2
 
 
+class _LargeJWKHandler(BaseHTTPRequestHandler):
+    body: ClassVar[bytes] = b"x" * 4096
+
+    def do_GET(self) -> None:  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(self.body)
+
+    def log_message(self, *args: object) -> None:  # noqa: D102
+        return
+
+
+def _serve_large_jwks(body: bytes) -> str:
+    _LargeJWKHandler.body = body
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _LargeJWKHandler)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    host, port = httpd.server_address
+    return f"http://{host}:{port}/jwks.json"
+
+
+def test_jwks_client_rejects_oversized_jwks_response() -> None:
+    uri = _serve_large_jwks(b"x" * 2048)
+    c = PyJWKClient(uri, max_bytes=1024, timeout=5.0)
+    with pytest.raises(PyJWKClientError, match="max_bytes"):
+        c.get_jwk_set()
+
+
+def test_jwks_client_require_https_rejects_http_uri() -> None:
+    uri = _serve_jwks(
+        {
+            "keys": [
+                {
+                    "kty": "oct",
+                    "k": _b64u(b"the-shared-secret-xy"),
+                    "kid": "alpha",
+                }
+            ]
+        }
+    )
+    with pytest.raises(PyJWKClientError, match="require_https"):
+        PyJWKClient(uri, require_https=True, timeout=5.0)
+
+
 def test_jwks_client_get_signing_key_from_jwt_missing_kid_raises() -> None:
     uri = _serve_jwks(
         {
