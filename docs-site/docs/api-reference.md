@@ -40,7 +40,7 @@ def decode(
     detached_payload: bytes | None = None,
     audience: str | Iterable[str] | None = None,
     subject: str | None = None,
-    issuer: str | None = None,
+    issuer: str | Iterable[str] | None = None,
     leeway: float | timedelta = 0,
 ) -> dict[str, Any]: ...
 ```
@@ -56,7 +56,7 @@ Parameters:
 - `algorithms`: required server-side allow-list when signature verification is on.
 - `audience`: expected `aud` value or values.
 - `subject`: expected `sub` value (passed to the native decoder when signature verification is on).
-- `issuer`: expected `iss` value.
+- `issuer`: expected `iss` value, or an iterable of allowed issuers (token `iss` must match one).
 - `leeway`: clock tolerance in seconds or as a `timedelta`.
 - `options`: validation switches (see below). Values from a `PyJWT(..., options=...)` instance are merged with per-call `options`.
 - `detached_payload`: not supported; raises `NotImplementedError` if set.

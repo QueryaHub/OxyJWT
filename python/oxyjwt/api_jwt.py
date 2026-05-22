@@ -116,7 +116,7 @@ class PyJWT:
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
         subject: str | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
     ) -> Any:
@@ -155,7 +155,7 @@ class PyJWT:
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
         subject: str | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -200,6 +200,12 @@ class PyJWT:
             raise TypeError("audience must be a string, iterable or None")
         if audience is not None and isinstance(audience, (bytes, bytearray, memoryview)):
             raise TypeError("audience must be a string, iterable or None")
+        if issuer is not None and not isinstance(
+            issuer, (str, Iterable, type(None))
+        ):
+            raise TypeError("issuer must be a string, iterable or None")
+        if issuer is not None and isinstance(issuer, (bytes, bytearray, memoryview)):
+            raise TypeError("issuer must be a string, iterable or None")
 
         _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
         header: dict[str, Any] = (
@@ -248,7 +254,7 @@ class PyJWT:
         payload: dict[str, Any],
         options: dict[str, Any],
         audience: str | Iterable[str] | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
         leeway: float = 0,
     ) -> None:
         self._validate_required(payload, options)
@@ -311,13 +317,14 @@ class PyJWT:
 
     @staticmethod
     def _validate_iss_field(
-        payload: dict[str, Any], issuer: str | None
+        payload: dict[str, Any], issuer: str | Iterable[str] | None
     ) -> None:
         if issuer is None:
             return
         if "iss" not in payload:
             raise MissingRequiredClaimError("iss")
-        if payload["iss"] != issuer:
+        issuers = [issuer] if isinstance(issuer, str) else list(issuer)
+        if payload["iss"] not in issuers:
             raise InvalidIssuerError("Invalid issuer")
 
     @staticmethod
