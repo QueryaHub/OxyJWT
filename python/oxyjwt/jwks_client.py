@@ -16,7 +16,7 @@ from oxyjwt.exceptions import InvalidAlgorithmError
 from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 
-_DEFAULT_UA = "OxyJWT-PyJWKClient/0.3 (+https://github.com/QueryaHub/OxyJWT)"
+_DEFAULT_UA = "OxyJWT-PyJWKClient/0.4 (+https://github.com/QueryaHub/OxyJWT)"
 _DEFAULT_MAX_JWKS_BYTES = 256 * 1024
 
 

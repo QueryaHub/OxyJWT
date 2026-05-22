@@ -1,6 +1,25 @@
 # Changelog
 
-## Unreleased (0.4.0)
+## Unreleased
+
+(No changes yet.)
+
+## 0.4.0 — 2026-05-22
+
+Production hardening release: security fixes, performance improvements, expanded PyJWT/JWKS parity, public typing stubs, and stricter CI. The API remains pre-1.0 (Beta). See [Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
+### Upgrading from 0.3.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface; behavior is stricter in several security-sensitive paths (see **Security** below).
+- New warnings: `InsecureDecodeWarning` when `verify_signature=False`; `PyJWKSetSkipWarning` when JWKS entries are skipped.
+- `PyJWKClient.cache_keys` defaults to **`False`** (PyJWT parity); opt in for per-`kid` LRU caching.
+- `decode` / `decode_complete` accept **`issuer`** as a string or iterable.
+- **`strict_aud`**, **`detached_payload`** (RFC 7797 when `b64: false`), and custom string JWT header fields on `encode`.
+- Public **`.pyi`** stubs and `py.typed` for IDE/mypy users.
 
 ### Added
 

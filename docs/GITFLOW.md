@@ -79,11 +79,9 @@ pytest
 - Scope examples: `jwks`, `api`, `rust`, `docs`, `bench`.
 - One PR should not mix unrelated issues.
 
-## Release 0.4.0 (later)
+## Release 0.4.0
 
-When `dev` is ready:
-
-1. Finalize changelog and version bump on `dev`.
+1. ~~Finalize changelog and version bump on `dev`.~~ (done on `dev`)
 2. PR `dev` → `main` (release PR).
 3. Tag `v0.4.0` on `main` → [Release workflow](.github/workflows/release.yml) publishes to PyPI.
 4. Merge `main` back into `dev` if needed.
