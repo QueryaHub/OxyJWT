@@ -4,6 +4,7 @@
 
 ### Added
 
+- `tests/test_jwk_rsa_ec.py` — RSA and EC JWK/JWKS parity tests with real `n`/`e` and `crv`/`x`/`y` shapes.
 - RFC 7797 detached payload decode via `detached_payload` when the protected header sets `b64` to `false`.
 - `encode` accepts custom string JWT header parameters beyond `alg` / `typ` / `cty` / `kid`, plus optional standard string JWS fields (`jku`, `x5u`, `x5t`, `x5t#S256`, `url`, `nonce`).
 - Public `.pyi` stubs for `api_jwt`, `jwk`, `jwks_client`, `jwk_exc`, and `warnings`; `py.typed` marker for PEP 561.
