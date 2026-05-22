@@ -270,7 +270,15 @@ class PyJWT:
         )
         header = _as_plain_dict(header_obj)
         pl_out = _as_plain_dict(dec)
-        self._validate_claims(pl_out, merged, audience, issuer, subject, lwf)
+        self._validate_claims(
+            pl_out,
+            merged,
+            audience,
+            issuer,
+            subject,
+            lwf,
+            rust_time_claims=True,
+        )
         return {
             "payload": pl_out,
             "header": header,
@@ -285,15 +293,24 @@ class PyJWT:
         issuer: str | Iterable[str] | None = None,
         subject: str | None = None,
         leeway: float = 0,
+        *,
+        rust_time_claims: bool = False,
     ) -> None:
+        """Validate claims after decode.
+
+        Verified decode (`rust_time_claims=True`): ``exp`` and ``nbf`` are checked in
+        Rust (jsonwebtoken); this layer handles ``iat`` plus audience/issuer/sub
+        rules that depend on call-time parameters.
+        """
         self._validate_required(payload, options)
         now = time.time()
         if "iat" in payload and options.get("verify_iat", True):
             self._validate_iat_fields(payload, now, leeway)
-        if "nbf" in payload and options.get("verify_nbf", True):
-            self._validate_nbf_fields(payload, now, leeway)
-        if "exp" in payload and options.get("verify_exp", True):
-            self._validate_exp_fields(payload, now, leeway)
+        if not rust_time_claims:
+            if "nbf" in payload and options.get("verify_nbf", True):
+                self._validate_nbf_fields(payload, now, leeway)
+            if "exp" in payload and options.get("verify_exp", True):
+                self._validate_exp_fields(payload, now, leeway)
         if options.get("verify_iss", True):
             self._validate_iss_field(payload, issuer)
         if options.get("verify_aud", True):

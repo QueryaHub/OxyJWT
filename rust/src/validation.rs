@@ -86,7 +86,10 @@ pub fn build_validation(
         }
     }
 
-    validation.sub = subject;
+    let verify_sub = option_bool(options, "verify_sub", true)?;
+    if verify_sub {
+        validation.sub = subject;
+    }
 
     Ok(DecodeValidation {
         algorithms: parsed_algorithms,

@@ -186,6 +186,73 @@ def test_unverified_decode_subject_with_verify_sub() -> None:
             )
 
 
+def test_verify_sub_false_ignores_subject_on_verified_decode() -> None:
+    token = oxyjwt.encode(
+        {"sub": "user-a", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    out = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        subject="user-b",
+        options={"verify_sub": False},
+    )
+    assert out["sub"] == "user-a"
+
+
+def test_iat_future_rejects_on_verified_decode() -> None:
+    token = oxyjwt.encode(
+        {
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time()) + 120,
+        },
+        "secret",
+    )
+    with pytest.raises(oxyjwt.ImmatureSignatureError, match="iat"):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], leeway=0)
+
+
+def test_iat_leeway_allows_recent_future_iat() -> None:
+    token = oxyjwt.encode(
+        {
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time()) + 30,
+        },
+        "secret",
+    )
+    out = oxyjwt.decode(
+        token, "secret", algorithms=["HS256"], leeway=60
+    )
+    assert "iat" in out
+
+
+def test_verify_iat_false_skips_iat_check() -> None:
+    token = oxyjwt.encode(
+        {
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time()) + 120,
+        },
+        "secret",
+    )
+    out = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_iat": False},
+    )
+    assert "iat" in out
+
+
+def test_missing_iat_does_not_fail_when_verify_iat_enabled() -> None:
+    token = oxyjwt.encode(
+        {"exp": int(time.time()) + 3600},
+        "secret",
+    )
+    out = oxyjwt.decode(token, "secret", algorithms=["HS256"])
+    assert "iat" not in out
+
+
 def test_unverified_decode_warns_on_require() -> None:
     token = oxyjwt.encode(
         {"sub": "u", "exp": int(time.time()) + 3600},
