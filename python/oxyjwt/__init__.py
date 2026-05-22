@@ -32,6 +32,7 @@ from .exceptions import (
 )
 from .jwk import PyJWK, PyJWKSet
 from .jwks_client import PyJWKClient
+from .warnings import InsecureDecodeWarning, RemovedInPyJWT3Warning
 
 __all__ = [
     "__version__",
@@ -49,6 +50,7 @@ __all__ = [
     "DecodeError",
     "ExpiredSignatureError",
     "ImmatureSignatureError",
+    "InsecureDecodeWarning",
     "InvalidAlgorithmError",
     "InvalidAudienceError",
     "InvalidIssuedAtError",
@@ -60,6 +62,7 @@ __all__ = [
     "MissingRequiredClaimError",
     "OxyJWTError",
     "PyJWTError",
+    "RemovedInPyJWT3Warning",
     "decode",
     "decode_complete",
     "decode_unverified",

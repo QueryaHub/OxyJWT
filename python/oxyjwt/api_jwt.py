@@ -19,9 +19,10 @@ from oxyjwt.exceptions import (
     InvalidAudienceError,
     InvalidIssuedAtError,
     InvalidIssuerError,
+    InvalidSubjectError,
     MissingRequiredClaimError,
 )
-from oxyjwt.warnings import RemovedInPyJWT3Warning
+from oxyjwt.warnings import InsecureDecodeWarning, RemovedInPyJWT3Warning
 
 _DEFAULT_DECODE_OPTIONS: dict[str, Any] = {
     "verify_signature": True,
@@ -30,8 +31,14 @@ _DEFAULT_DECODE_OPTIONS: dict[str, Any] = {
     "verify_iat": True,
     "verify_aud": True,
     "verify_iss": True,
+    "verify_sub": True,
     "require": [],
 }
+
+_UNVERIFIED_DECODE_WARNING = (
+    "Unverified JWT decoding is insecure. The token was parsed without "
+    "signature verification; claims must not be used for authorization."
+)
 
 
 def _sig_as_bytes(sig: object) -> bytes:
@@ -184,16 +191,45 @@ class PyJWT:
                 stacklevel=2,
             )
         if not co.get("verify_signature", True):
+            warnings.warn(
+                _UNVERIFIED_DECODE_WARNING,
+                InsecureDecodeWarning,
+                stacklevel=2,
+            )
             co.setdefault("verify_exp", False)
             co.setdefault("verify_nbf", False)
             co.setdefault("verify_iat", False)
             co.setdefault("verify_aud", False)
             co.setdefault("verify_iss", False)
+            co.setdefault("verify_sub", False)
         if co.get("verify_signature", True) and not algorithms:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
         merged = {**self._options, **co}
+        if not co.get("verify_signature", True):
+            if subject is not None and not merged.get("verify_sub", False):
+                warnings.warn(
+                    "The subject argument is ignored when verify_sub is False "
+                    "(the default when verify_signature is False).",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
+            elif subject is not None and merged.get("verify_sub", False):
+                warnings.warn(
+                    "Checking subject with verify_signature=False does not prove "
+                    "the token was issued for that subject; use signature "
+                    "verification in production.",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
+            if merged.get("require"):
+                warnings.warn(
+                    "options['require'] only checks claim presence when "
+                    "verify_signature is False, not authenticity.",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
         if audience is not None and not isinstance(
             audience, (str, Iterable, type(None))
         ):
@@ -218,7 +254,9 @@ class PyJWT:
             pl_d = _oxyjwt.decode_unverified(token)
             if not isinstance(pl_d, dict):
                 pl_d = _claims_to_plain_dict(pl_d)
-            self._validate_claims(pl_d, merged, audience, issuer, lwf)
+            self._validate_claims(
+                pl_d, merged, audience, issuer, subject, lwf
+            )
             return {
                 "payload": pl_d,
                 "header": header,
@@ -242,7 +280,7 @@ class PyJWT:
             pl_out = _claims_to_plain_dict(dec)
         else:
             pl_out = dec
-        self._validate_claims(pl_out, merged, audience, issuer, lwf)
+        self._validate_claims(pl_out, merged, audience, issuer, subject, lwf)
         return {
             "payload": pl_out,
             "header": header,
@@ -255,6 +293,7 @@ class PyJWT:
         options: dict[str, Any],
         audience: str | Iterable[str] | None = None,
         issuer: str | Iterable[str] | None = None,
+        subject: str | None = None,
         leeway: float = 0,
     ) -> None:
         self._validate_required(payload, options)
@@ -269,6 +308,8 @@ class PyJWT:
             self._validate_iss_field(payload, issuer)
         if options.get("verify_aud", True):
             self._validate_aud_field(payload, audience)
+        if options.get("verify_sub", True):
+            self._validate_sub_field(payload, subject)
 
     @staticmethod
     def _validate_required(
@@ -314,6 +355,17 @@ class PyJWT:
             ) from e
         if exp <= (now - leeway):
             raise ExpiredSignatureError("Signature has expired")
+
+    @staticmethod
+    def _validate_sub_field(
+        payload: dict[str, Any], subject: str | None
+    ) -> None:
+        if "sub" not in payload:
+            return
+        if not isinstance(payload["sub"], str):
+            raise InvalidSubjectError("Subject must be a string")
+        if subject is not None and payload.get("sub") != subject:
+            raise InvalidSubjectError("Invalid subject")
 
     @staticmethod
     def _validate_iss_field(
