@@ -7,7 +7,7 @@ import pytest
 
 import oxyjwt
 from oxyjwt.jwk import PyJWK, PyJWKSet
-from oxyjwt.jwk_exc import PyJWKSetError
+from oxyjwt.jwk_exc import PyJWKError, PyJWKSetError
 
 
 def _oct_jwk_for_secret(secret: bytes) -> str:
@@ -42,3 +42,41 @@ def test_pyjwkset_from_dict() -> None:
 def test_pyjwkset_empty_keys_raises() -> None:
     with pytest.raises(PyJWKSetError):
         PyJWKSet.from_dict({"keys": []})
+
+
+def test_pyjwk_rejects_encryption_use() -> None:
+    secret = b"my-secret-32-bytes-long-ok!!!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
+    with pytest.raises(PyJWKError, match="use=enc"):
+        PyJWK(enc_jwk)
+
+
+def test_pyjwkset_skips_enc_keys_keeps_signing_keys() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
+    sig_jwk = {"kty": "oct", "k": k, "kid": "sig-k", "use": "sig"}
+    s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
+    assert len(s.keys) == 1
+    assert s["sig-k"].key_id == "sig-k"
+    tok = oxyjwt.encode(
+        {"x": 1, "exp": 9_999_999_999},
+        secret,
+        algorithm="HS256",
+        headers={"kid": "sig-k"},
+    )
+    oxyjwt.decode(
+        tok,
+        s["sig-k"].key,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+
+
+def test_pyjwkset_only_encryption_keys_raises() -> None:
+    secret = b"my-secret-32-bytes-long-ok!!!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
+    with pytest.raises(PyJWKSetError, match="usable keys"):
+        PyJWKSet.from_dict({"keys": [enc_jwk]})

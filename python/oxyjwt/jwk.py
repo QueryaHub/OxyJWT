@@ -20,11 +20,20 @@ def _as_dict(jwk: Mapping[str, Any] | str) -> dict[str, Any]:
     return dict(jwk)
 
 
+def _reject_encryption_jwk(data: dict[str, Any]) -> None:
+    use = data.get("use")
+    if use is not None and str(use).lower() == "enc":
+        raise PyJWKError(
+            "JWK with use=enc cannot be used for signature verification"
+        )
+
+
 class PyJWK:
     def __init__(self, jwk: Mapping[str, Any] | str, algorithm: str | None = None) -> None:
         data = _as_dict(jwk)
         if not data.get("kty"):
             raise InvalidKeyError(f"kty is not found: {data!r}")
+        _reject_encryption_jwk(data)
         # algorithm hint only for error messages; verification uses the JWK as-is
         self._jwk = data
         _ = algorithm
