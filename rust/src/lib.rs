@@ -18,6 +18,7 @@ fn _oxyjwt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(api::encode, m)?)?;
     m.add_function(wrap_pyfunction!(api::encode_json, m)?)?;
     m.add_function(wrap_pyfunction!(api::decode, m)?)?;
+    m.add_function(wrap_pyfunction!(api::decode_verified_complete, m)?)?;
     m.add_function(wrap_pyfunction!(api::get_unverified_header, m)?)?;
     m.add_function(wrap_pyfunction!(api::decode_unverified, m)?)?;
     m.add_function(wrap_pyfunction!(jws::jws_parse_compact, m)?)?;
