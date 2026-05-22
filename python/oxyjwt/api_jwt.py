@@ -33,6 +33,7 @@ _DEFAULT_DECODE_OPTIONS: dict[str, Any] = {
     "verify_aud": True,
     "verify_iss": True,
     "verify_sub": True,
+    "strict_aud": False,
     "require": [],
 }
 
@@ -329,7 +330,11 @@ class PyJWT:
         if options.get("verify_iss", True):
             self._validate_iss_field(payload, issuer)
         if options.get("verify_aud", True):
-            self._validate_aud_field(payload, audience)
+            self._validate_aud_field(
+                payload,
+                audience,
+                strict=bool(options.get("strict_aud", False)),
+            )
         if options.get("verify_sub", True):
             self._validate_sub_field(payload, subject)
 
@@ -403,7 +408,10 @@ class PyJWT:
 
     @staticmethod
     def _validate_aud_field(
-        payload: dict[str, Any], audience: str | Iterable[str] | None
+        payload: dict[str, Any],
+        audience: str | Iterable[str] | None,
+        *,
+        strict: bool = False,
     ) -> None:
         if audience is None:
             if "aud" not in payload or not payload["aud"]:
@@ -412,6 +420,16 @@ class PyJWT:
         if "aud" not in payload or not payload["aud"]:
             raise MissingRequiredClaimError("aud")
         audience_claims = payload["aud"]
+        if strict:
+            if not isinstance(audience, str):
+                raise InvalidAudienceError("Invalid audience (strict)")
+            if not isinstance(audience_claims, str):
+                raise InvalidAudienceError(
+                    "Invalid claim format in token (strict)"
+                )
+            if audience != audience_claims:
+                raise InvalidAudienceError("Audience doesn't match (strict)")
+            return
         if isinstance(audience_claims, str):
             audience_claims = [audience_claims]
         if not isinstance(audience_claims, list):

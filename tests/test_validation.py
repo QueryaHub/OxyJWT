@@ -46,6 +46,51 @@ def test_audience_validation() -> None:
         oxyjwt.decode(token, "secret", algorithms=["HS256"], audience="other")
 
 
+def test_strict_aud_rejects_list_audience_claim() -> None:
+    token = oxyjwt.encode(
+        {"exp": int(time.time()) + 3600, "aud": ["api", "other"]},
+        "secret",
+    )
+    with pytest.raises(oxyjwt.InvalidAudienceError, match="strict"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            audience="api",
+            options={"strict_aud": True},
+        )
+
+
+def test_strict_aud_rejects_iterable_audience_argument() -> None:
+    token = oxyjwt.encode(
+        {"exp": int(time.time()) + 3600, "aud": "api"},
+        "secret",
+    )
+    with pytest.raises(oxyjwt.InvalidAudienceError, match="strict"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            audience=["api"],
+            options={"strict_aud": True},
+        )
+
+
+def test_strict_aud_accepts_exact_string_match() -> None:
+    token = oxyjwt.encode(
+        {"exp": int(time.time()) + 3600, "aud": "api"},
+        "secret",
+    )
+    out = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        audience="api",
+        options={"strict_aud": True},
+    )
+    assert out["aud"] == "api"
+
+
 def test_issuer_validation() -> None:
     token = oxyjwt.encode(
         {"exp": int(time.time()) + 3600, "iss": "issuer"},
@@ -246,7 +291,7 @@ def test_verify_iat_false_skips_iat_check() -> None:
 
 def test_fractional_leeway_allows_slightly_future_exp() -> None:
     now = int(time.time())
-    token = oxyjwt.encode({"exp": now}, "secret")
+    token = oxyjwt.encode({"exp": now + 1}, "secret")
     out = oxyjwt.decode(
         token, "secret", algorithms=["HS256"], leeway=0.9
     )

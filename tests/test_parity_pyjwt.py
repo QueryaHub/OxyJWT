@@ -6,6 +6,7 @@ import time
 from datetime import timedelta
 
 import jwt
+import pytest
 
 import oxyjwt
 
@@ -84,6 +85,52 @@ def test_audience_decode_parity() -> None:
     ) == oxyjwt.decode(
         token, secret, algorithms=["HS256"], audience="api", options=opts
     )
+
+
+def test_strict_aud_decode_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    payload = {
+        "sub": "u",
+        "aud": "api",
+        "exp": int(time.time()) + 600,
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    opts = {"strict_aud": True}
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="api",
+        options=opts,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="api",
+        options=opts,
+    )
+
+    list_aud_token = jwt.encode(
+        {**payload, "aud": ["api", "other"]},
+        secret,
+        algorithm="HS256",
+    )
+    with pytest.raises(jwt.InvalidAudienceError):
+        jwt.decode(
+            list_aud_token,
+            secret,
+            algorithms=["HS256"],
+            audience="api",
+            options=opts,
+        )
+    with pytest.raises(oxyjwt.InvalidAudienceError):
+        oxyjwt.decode(
+            list_aud_token,
+            secret,
+            algorithms=["HS256"],
+            audience="api",
+            options=opts,
+        )
 
 
 def test_issuer_decode_parity() -> None:

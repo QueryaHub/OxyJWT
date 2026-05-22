@@ -64,7 +64,7 @@ Parameters:
 Supported `options` keys (booleans unless noted):
 
 - `verify_signature` — verify the JWS signature (default `True`).
-- `verify_exp`, `verify_nbf`, `verify_iat`, `verify_aud`, `verify_iss`, `verify_sub`
+- `verify_exp`, `verify_nbf`, `verify_iat`, `verify_aud`, `verify_iss`, `verify_sub`, `strict_aud`
 - `require_exp` — require an `exp` claim in the token
 - `require` — list of claim names that must be present (may also be passed on the `PyJWT` instance)
 
