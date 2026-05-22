@@ -142,10 +142,6 @@ class PyJWT:
                 RemovedInPyJWT3Warning,
                 stacklevel=2,
             )
-        if detached_payload is not None:
-            raise NotImplementedError(
-                "detached JWS payload is not supported in this OxyJWT release"
-            )
         return self.decode_complete(
             jwt,
             key,
@@ -181,11 +177,11 @@ class PyJWT:
                 RemovedInPyJWT3Warning,
                 stacklevel=2,
             )
-        if detached_payload is not None:
-            raise NotImplementedError(
-                "detached JWS payload is not supported in this OxyJWT release"
-            )
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
+        if detached_payload is not None and not isinstance(
+            detached_payload, (bytes, bytearray, memoryview)
+        ):
+            raise TypeError("detached_payload must be bytes")
         # Match PyJWT: JWS/algorithm gating uses call-only `options` + setdefault, then merge for claims
         co: dict[str, Any] = dict(options or {})
         co.setdefault("verify_signature", True)
@@ -213,6 +209,13 @@ class PyJWT:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
+        if detached_payload is None and co.get("verify_signature", True):
+            header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+            if header_peek.get("b64") is False:
+                raise DecodeError(
+                    'It is required that you pass in a value for the "detached_payload" '
+                    "argument to decode a message having the b64 header set to false."
+                )
         merged = {**self._options, **co}
         if not co.get("verify_signature", True):
             if subject is not None and not merged.get("verify_sub", False):
@@ -252,9 +255,12 @@ class PyJWT:
 
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
-            _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
-            header = _as_plain_dict(header_obj)
-            pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
+            header = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+            _s, _header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
+            if detached_payload is not None:
+                pl_d = _as_plain_dict(orjson.loads(bytes(detached_payload)))
+            else:
+                pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
             self._validate_claims(
                 pl_d, merged, audience, issuer, subject, lwf
             )
@@ -283,6 +289,9 @@ class PyJWT:
             leeway=lwf,
             options=rust_options,
             require=req,
+            detached_payload=bytes(detached_payload)
+            if detached_payload is not None
+            else None,
         )
         header = _as_plain_dict(header_obj)
         pl_out = _as_plain_dict(dec)
@@ -293,7 +302,7 @@ class PyJWT:
             issuer,
             subject,
             lwf,
-            rust_time_claims=whole_leeway,
+            rust_time_claims=whole_leeway and detached_payload is None,
         )
         return {
             "payload": pl_out,

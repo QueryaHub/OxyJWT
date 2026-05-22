@@ -59,7 +59,7 @@ Parameters:
 - `issuer`: expected `iss` value, or an iterable of allowed issuers (token `iss` must match one).
 - `leeway`: clock tolerance in seconds or as a `timedelta`.
 - `options`: validation switches (see below). Values from a `PyJWT(..., options=...)` instance are merged with per-call `options`.
-- `detached_payload`: not supported; raises `NotImplementedError` if set.
+- `detached_payload`: required when the protected header sets `b64` to `false` (RFC 7797 detached content). Pass the raw payload bytes used when the JWS was signed.
 
 Supported `options` keys (booleans unless noted):
 

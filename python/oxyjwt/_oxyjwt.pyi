@@ -86,6 +86,7 @@ def decode_verified_complete(
     leeway: float = 0.0,
     options: Mapping[str, Any] | None = None,
     require: Sequence[str] | None = None,
+    detached_payload: bytes | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], bytes]: ...
 
 
