@@ -601,3 +601,29 @@ def test_jwks_client_refresh_on_miss_within_lifespan(
     jwk = c.get_signing_key("new-key")
     assert jwk.key_id == "new-key"
     assert _RotatingJWKHandler.request_count == 2
+
+
+def test_jwks_client_concurrent_get_signing_key() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    c = PyJWKClient(uri, cache_jwk_set=True, cache_keys=True, timeout=5.0)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            jwk = c.get_signing_key("alpha")
+            assert jwk.key_id == "alpha"
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(12)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert _JWKHandler.request_count <= 2
