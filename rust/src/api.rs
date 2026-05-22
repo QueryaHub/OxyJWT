@@ -1,9 +1,14 @@
-use jsonwebtoken::{dangerous, decode as jwt_decode, decode_header, encode as jwt_encode, Header};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use jsonwebtoken::{
+    crypto::verify as jwt_crypto_verify, dangerous, decode as jwt_decode, encode as jwt_encode,
+    Header,
+};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use serde_json::Value;
 
-use crate::algorithms::{algorithm_name, parse_algorithm};
+use crate::algorithms::{algorithm_name, parse_algorithm, parse_algorithm_name};
 use crate::claims::{json_to_py, py_to_json_for_encode};
 use crate::errors;
 use crate::jws;
@@ -91,7 +96,8 @@ type DecodeVerifiedCompleteOutput = (Py<PyAny>, Py<PyAny>, Py<PyBytes>);
     subject = None,
     leeway = 0.0,
     options = None,
-    require = None
+    require = None,
+    detached_payload = None
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn decode_verified_complete(
@@ -105,12 +111,23 @@ pub fn decode_verified_complete(
     leeway: f64,
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
+    detached_payload: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
     ensure_token_within_limit(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
     let decoding_key = decoding_key_from_py(key, &decode_validation.algorithms)?;
+
+    if let Some(payload) = detached_payload {
+        return decode_rfc7797_verified_complete(
+            py,
+            token,
+            payload.as_bytes(),
+            &decode_validation,
+            &decoding_key,
+        );
+    }
 
     let token_data = py
         .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
@@ -129,17 +146,83 @@ pub fn decode_verified_complete(
     Ok((claims_py, header_py, sig_py.into()))
 }
 
+fn decode_rfc7797_verified_complete(
+    py: Python<'_>,
+    token: &str,
+    detached_payload: &[u8],
+    decode_validation: &validation::DecodeValidation,
+    decoding_key: &jsonwebtoken::DecodingKey,
+) -> PyResult<DecodeVerifiedCompleteOutput> {
+    let token = token.to_owned();
+    let payload = detached_payload.to_vec();
+    let allowed_algorithms = decode_validation.algorithms.clone();
+    let decoding_key = decoding_key.clone();
+    let (parts, claims, signature) = py
+        .detach(move || {
+            let parts = jws::parse_rfc7797_compact(&token)?;
+            let claims: Value = serde_json::from_slice(&payload)
+                .map_err(|err| format!("Invalid payload string: {err}"))?;
+            if !claims.is_object() {
+                return Err("Invalid payload string: must be a json object".to_string());
+            }
+            let alg_name = parts
+                .header
+                .get("alg")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "Algorithm not specified".to_string())?;
+            let algorithm = parse_algorithm_name(alg_name)?;
+            if !allowed_algorithms.contains(&algorithm) {
+                return Err("The specified alg value is not allowed".to_string());
+            }
+            let signing_input = jws::signing_input_rfc7797(&parts.header_segment, &payload);
+            let verified = jwt_crypto_verify(
+                &parts.signature_segment,
+                &signing_input,
+                &decoding_key,
+                algorithm,
+            )
+            .map_err(|err| err.to_string())?;
+            if !verified {
+                return Err("Signature verification failed".to_string());
+            }
+            let signature = URL_SAFE_NO_PAD
+                .decode(&parts.signature_segment)
+                .map_err(|e| e.to_string())?;
+            Ok((parts, claims, signature))
+        })
+        .map_err(map_rfc7797_decode_error)?;
+
+    let header_py = json_to_py(py, &parts.header)?;
+    let claims_py = json_to_py(py, &claims)?;
+    let sig_py = PyBytes::new(py, &signature);
+    Ok((claims_py, header_py, sig_py.into()))
+}
+
+fn map_rfc7797_decode_error(message: String) -> PyErr {
+    if message.contains("Signature verification failed") {
+        return errors::InvalidSignatureError::new_err(message);
+    }
+    if message.contains("not allowed") || message.contains("not supported") {
+        return errors::InvalidAlgorithmError::new_err(message);
+    }
+    if message.contains("Invalid payload") {
+        return errors::DecodeError::new_err(message);
+    }
+    if message.contains("b64") || message.contains("Payload segment") {
+        return errors::InvalidTokenError::new_err(message);
+    }
+    errors::decode_error(message)
+}
+
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
     ensure_token_within_limit(token)?;
     let token = token.to_owned();
     let header = py
-        .detach(move || decode_header(&token))
-        .map_err(errors::from_jwt_decode_error)?;
-    let value = serde_json::to_value(header)
-        .map_err(|err| errors::decode_error(format!("failed to serialize header: {err}")))?;
+        .detach(move || jws::parse_compact_header_json(&token))
+        .map_err(errors::decode_error)?;
 
-    json_to_py(py, &value)
+    json_to_py(py, &header)
 }
 
 #[pyfunction]

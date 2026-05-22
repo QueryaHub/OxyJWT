@@ -14,7 +14,7 @@ If you previously caught `OxyJWTError` for signature failures, you may need to c
 
 ## Differences to expect
 
-- **Detached payloads** (`b64: false` / `detached_payload=`) are not supported yet; `decode` / `decode_complete` raise `NotImplementedError` if you pass `detached_payload`.
+- **Detached payloads** (RFC 7797, `b64: false` in the protected header): pass the raw payload bytes as `detached_payload` to `decode` / `decode_complete`, matching PyJWT.
 - **Plugin / `register_algorithm` workflows** (full `PyJWS` plugin model) are not a goal of v1; use the supported algorithm set from the Rust `jsonwebtoken` stack.
 - **`sort_headers`**: for encoding, the boolean applies to **JSON** serialization of the payload (stable key order via **orjson** with sorted keys); header handling follows the same rules as the Rust `encode` path for supported header fields.
 

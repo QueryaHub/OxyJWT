@@ -23,8 +23,8 @@ pub fn check_compact_token_size(token: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Returns `(signing_input bytes, header JSON object, raw payload bytes, signature bytes)`.
-pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
+/// Split a compact JWS/JWT into encoded header, payload, and signature segments.
+pub fn split_compact_segments(token: &str) -> Result<(&str, &str, &str), String> {
     check_compact_token_size(token)?;
     let mut parts = token.split('.');
     let h = parts
@@ -39,14 +39,83 @@ pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
     if parts.next().is_some() {
         return Err("Too many segments".to_string());
     }
-    let signing_input = format!("{h}.{p}").into_bytes();
-    let header_bytes = URL_SAFE_NO_PAD.decode(h).map_err(|e| e.to_string())?;
-    let payload_bytes = URL_SAFE_NO_PAD.decode(p).map_err(|e| e.to_string())?;
-    let signature_bytes = URL_SAFE_NO_PAD.decode(s).map_err(|e| e.to_string())?;
+    Ok((h, p, s))
+}
+
+fn decode_header_json(header_segment: &str) -> Result<Value, String> {
+    let header_bytes = URL_SAFE_NO_PAD
+        .decode(header_segment)
+        .map_err(|e| e.to_string())?;
     let header: Value = serde_json::from_slice(&header_bytes).map_err(|e| e.to_string())?;
     if !header.is_object() {
         return Err("Invalid header string: must be a json object".to_string());
     }
+    Ok(header)
+}
+
+/// Decode the protected header JSON without parsing the payload (RFC 7515 / RFC 7797).
+pub fn parse_compact_header_json(token: &str) -> Result<Value, String> {
+    let (h, _, _) = split_compact_segments(token)?;
+    decode_header_json(h)
+}
+
+/// RFC 7797 detached JWS: `b64:false`, empty payload segment, external payload bytes.
+pub struct Rfc7797Parts {
+    pub header_segment: String,
+    pub signature_segment: String,
+    pub header: Value,
+}
+
+pub fn validate_rfc7797_header(header: &Value) -> Result<(), String> {
+    if header.get("b64").and_then(Value::as_bool) != Some(false) {
+        return Err(
+            "detached_payload requires the JWT header to set b64 to false (RFC 7797)".to_string(),
+        );
+    }
+    let crit = header
+        .get("crit")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string()
+        })?;
+    if !crit.iter().any(|v| v.as_str() == Some("b64")) {
+        return Err(
+            "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string(),
+        );
+    }
+    Ok(())
+}
+
+pub fn parse_rfc7797_compact(token: &str) -> Result<Rfc7797Parts, String> {
+    let (h, p, s) = split_compact_segments(token)?;
+    if !p.is_empty() {
+        return Err("Payload segment must be empty when 'b64' is false.".to_string());
+    }
+    let header = decode_header_json(h)?;
+    validate_rfc7797_header(&header)?;
+    Ok(Rfc7797Parts {
+        header_segment: h.to_owned(),
+        signature_segment: s.to_owned(),
+        header,
+    })
+}
+
+pub fn signing_input_rfc7797(header_segment: &str, payload: &[u8]) -> Vec<u8> {
+    let mut signing_input =
+        Vec::with_capacity(header_segment.len().saturating_add(1) + payload.len());
+    signing_input.extend_from_slice(header_segment.as_bytes());
+    signing_input.push(b'.');
+    signing_input.extend_from_slice(payload);
+    signing_input
+}
+
+/// Returns `(signing_input bytes, header JSON object, raw payload bytes, signature bytes)`.
+pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
+    let (h, p, s) = split_compact_segments(token)?;
+    let signing_input = format!("{h}.{p}").into_bytes();
+    let header = decode_header_json(h)?;
+    let payload_bytes = URL_SAFE_NO_PAD.decode(p).map_err(|e| e.to_string())?;
+    let signature_bytes = URL_SAFE_NO_PAD.decode(s).map_err(|e| e.to_string())?;
     Ok((signing_input, header, payload_bytes, signature_bytes))
 }
 
@@ -93,6 +162,17 @@ mod tests {
         let token = "a".repeat(MAX_COMPACT_JWT_BYTES + 1);
         let err = parse_compact_jws(&token).unwrap_err();
         assert!(err.contains("maximum compact token size"));
+    }
+
+    #[test]
+    fn rfc7797_signing_input_uses_raw_payload() {
+        let header = "eyJhbGciOiJIUzI1NiJ9";
+        let payload = br#"{"sub":"u"}"#;
+        let input = signing_input_rfc7797(header, payload);
+        assert_eq!(
+            input,
+            format!("{header}.{}", String::from_utf8_lossy(payload)).as_bytes()
+        );
     }
 
     #[test]
