@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -16,6 +17,23 @@ def _payload() -> dict[str, object]:
         "exp": int(time.time()) + 3600,
         "nbf": int(time.time()) - 1,
     }
+
+
+def test_encode_datetime_claim_roundtrip() -> None:
+    exp = datetime.now(timezone.utc)
+    token = oxyjwt.encode(
+        {"sub": "u", "exp": exp},
+        "secret",
+        algorithm="HS256",
+    )
+    decoded = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded["sub"] == "u"
+    assert isinstance(decoded["exp"], int)
 
 
 def test_hs256_roundtrip_with_raw_secret() -> None:

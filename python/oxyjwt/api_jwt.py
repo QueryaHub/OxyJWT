@@ -109,9 +109,8 @@ class PyJWT:
                 option=opts,
                 default=_json_default_from_encoder(json_encoder),
             )
-        body = body_b.decode("utf-8")
         alg = algorithm if algorithm is not None else "HS256"
-        return _oxyjwt.encode_json(body, key, alg, headers)
+        return _oxyjwt.encode_json(body_b, key, alg, headers)
 
     def decode(
         self,

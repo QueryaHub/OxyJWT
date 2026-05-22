@@ -12,6 +12,10 @@
 - `InsecureDecodeWarning` when `verify_signature` is `False`; additional warnings when `subject` or `require` are used without signature verification.
 - `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.
 
+### Performance
+
+- Encode path passes `orjson` output as bytes into Rust (`serde_json::from_slice`), removing an extra UTF-8 decode and `from_str` parse.
+
 ## 0.3.0
 
 Documentation, PyJWT parity, and operational polish. PyPI classifiers now mark the project as **Beta**; the API remains pre-1.0. See [Versioning](versioning.md). Security reporting is described in [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
