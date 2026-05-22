@@ -273,12 +273,12 @@ class PyJWT:
 
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
-            header = _as_plain_dict(_oxyjwt.get_unverified_header(token))
-            _s, _header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
+            _s, header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
+            header = _as_plain_dict(header_obj)
             if detached_payload is not None:
                 pl_d = _as_plain_dict(orjson.loads(bytes(detached_payload)))
             else:
-                pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
+                pl_d = _as_plain_dict(orjson.loads(bytes(pld_bytes)))
             self._validate_claims(
                 pl_d, merged, audience, issuer, subject, lwf
             )
