@@ -130,7 +130,7 @@ Supported options:
 | `iat` | Python | Python |
 | `aud`, `iss`, `sub` | Rust when parameters/options enable it; Python also enforces PyJWT-style rules (e.g. `aud` present without an `audience` argument) | Python |
 
-Use integer-second `leeway` for consistent `exp`/`nbf` behavior on verified decode (Rust uses whole seconds). Fractional leeway applies fully to `iat` (Python).
+**`leeway`:** may be a `float` or `timedelta`. On verified decode, whole-second values are applied in Rust (`exp`/`nbf`, rounded to the nearest second). Fractional leeway (e.g. `0.5`) is applied in Python for `exp`/`nbf`/`iat` so behavior matches PyJWT; `iat` always uses the full float value.
 
 !!! warning "`verify_signature=False` is not the same as `decode_unverified`"
 

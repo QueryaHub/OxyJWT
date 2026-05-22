@@ -244,6 +244,24 @@ def test_verify_iat_false_skips_iat_check() -> None:
     assert "iat" in out
 
 
+def test_fractional_leeway_allows_slightly_future_exp() -> None:
+    now = int(time.time())
+    token = oxyjwt.encode({"exp": now}, "secret")
+    out = oxyjwt.decode(
+        token, "secret", algorithms=["HS256"], leeway=0.9
+    )
+    assert out["exp"] == now
+
+
+def test_fractional_leeway_still_rejects_clearly_expired_token() -> None:
+    now = int(time.time())
+    token = oxyjwt.encode({"exp": now - 1}, "secret")
+    with pytest.raises(oxyjwt.ExpiredSignatureError):
+        oxyjwt.decode(
+            token, "secret", algorithms=["HS256"], leeway=0.5
+        )
+
+
 def test_missing_iat_does_not_fail_when_verify_iat_enabled() -> None:
     token = oxyjwt.encode(
         {"exp": int(time.time()) + 3600},

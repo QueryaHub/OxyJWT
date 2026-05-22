@@ -169,6 +169,24 @@ def test_require_claim_parity() -> None:
     ) == oxyjwt.decode(token, secret, algorithms=["HS256"], options=options)
 
 
+def test_fractional_leeway_exp_boundary_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    now = int(time.time())
+    payload = {"sub": "u", "exp": now}
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        leeway=0.9,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        leeway=0.9,
+    )
+
+
 def test_leeway_timedelta_parity() -> None:
     secret = "hmac-secret-32-bytes-long-ok!!!"
     now = int(time.time())
