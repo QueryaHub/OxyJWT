@@ -38,7 +38,13 @@ def test_encode_datetime_claim_roundtrip() -> None:
 
 def test_decode_complete_returns_header_and_signature() -> None:
     token = oxyjwt.encode(_payload(), "secret", algorithm="HS256", headers={"kid": "k1"})
-    out = oxyjwt.decode_complete(token, "secret", algorithms=["HS256"])
+    out = oxyjwt.decode_complete(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        audience="api",
+        issuer="issuer",
+    )
     assert out["payload"]["sub"] == "user-123"
     assert out["header"]["alg"] == "HS256"
     assert out["header"]["kid"] == "k1"
