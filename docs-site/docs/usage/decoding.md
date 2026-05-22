@@ -91,25 +91,40 @@ Presence is not the same as business validation. For example, requiring `sub` on
 
 ## Options
 
-`options` controls a small set of validation switches:
+`options` controls validation switches. Values set on a `PyJWT(options={...})` instance are merged with the dict passed to each `decode` call.
 
 ```python
 claims = oxyjwt.decode(
     token,
     key,
     algorithms=["HS256"],
-    options={"verify_exp": True, "verify_nbf": True, "verify_aud": True},
+    options={
+        "verify_signature": True,
+        "verify_exp": True,
+        "verify_nbf": True,
+        "verify_iat": True,
+        "verify_aud": True,
+        "verify_iss": True,
+    },
 )
 ```
 
 Supported options:
 
-- `verify_exp`: validate `exp`.
-- `verify_nbf`: validate `nbf`.
-- `verify_aud`: validate `aud` when `audience` is provided.
-- `require_exp`: require the `exp` claim.
+- `verify_signature` — verify the JWS signature (default `True`). When `False`, `algorithms` is not required; treat claims as untrusted.
+- `verify_exp` — validate `exp`.
+- `verify_nbf` — validate `nbf`.
+- `verify_iat` — validate `iat` (Python-side check when enabled).
+- `verify_aud` — validate `aud` when `audience` is provided.
+- `verify_iss` — validate `iss` when `issuer` is provided.
+- `require_exp` — require the `exp` claim.
+- `require` — list of claim names that must be present.
 
-`verify_signature=False` is not supported in `decode`. Use `decode_unverified` only when you intentionally need unauthenticated inspection.
+!!! warning "`verify_signature=False` is not the same as `decode_unverified`"
+
+    With `verify_signature=False`, OxyJWT still parses the compact JWT and can run claim checks according to your `options`. You still must not trust `sub`, roles, or other claims for authorization unless you have another integrity guarantee.
+
+    `decode_unverified` and `get_unverified_header` are for inspection and debugging only; they skip cryptographic verification entirely.
 
 ## Unverified Helpers
 

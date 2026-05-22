@@ -32,41 +32,43 @@ Raises:
 
 ```python
 def decode(
-    token: str,
-    key: str | bytes | DecodingKey,
-    algorithms: Sequence[str],
-    *,
-    audience: str | Sequence[str] | None = None,
-    issuer: str | Sequence[str] | None = None,
+    jwt: str | bytes,
+    key: str | bytes | DecodingKey = "",
+    algorithms: list[str] | None = None,
+    options: Mapping[str, Any] | None = None,
+    verify: bool | None = None,
+    detached_payload: bytes | None = None,
+    audience: str | Iterable[str] | None = None,
     subject: str | None = None,
-    leeway: int = 0,
-    options: Mapping[str, bool] | None = None,
-    require: Sequence[str] | None = None,
+    issuer: str | None = None,
+    leeway: float | timedelta = 0,
 ) -> dict[str, Any]: ...
 ```
 
-Verifies `token` and returns its claims as a Python dict.
+Verifies the JWT and returns its claims as a Python dict (via `decode_complete`).
+
+When `options["verify_signature"]` is true (the default), `algorithms` is required and the JWS signature is verified in the Rust core.
 
 Parameters:
 
-- `token`: compact JWT string.
+- `jwt`: compact JWT string or UTF-8 bytes.
 - `key`: raw HMAC secret or a `DecodingKey`.
-- `algorithms`: required server-side allow-list.
+- `algorithms`: required server-side allow-list when signature verification is on.
 - `audience`: expected `aud` value or values.
-- `issuer`: expected `iss` value or values.
-- `subject`: expected `sub` value.
-- `leeway`: clock tolerance in seconds.
-- `options`: validation switches.
-- `require`: claims that must be present.
+- `subject`: expected `sub` value (passed to the native decoder when signature verification is on).
+- `issuer`: expected `iss` value.
+- `leeway`: clock tolerance in seconds or as a `timedelta`.
+- `options`: validation switches (see below). Values from a `PyJWT(..., options=...)` instance are merged with per-call `options`.
+- `detached_payload`: not supported; raises `NotImplementedError` if set.
 
-Supported `options` keys:
+Supported `options` keys (booleans unless noted):
 
-- `verify_exp`
-- `verify_nbf`
-- `verify_aud`
-- `require_exp`
+- `verify_signature` — verify the JWS signature (default `True`).
+- `verify_exp`, `verify_nbf`, `verify_iat`, `verify_aud`, `verify_iss`
+- `require_exp` — require an `exp` claim in the token
+- `require` — list of claim names that must be present (may also be passed on the `PyJWT` instance)
 
-`verify_signature=False` is intentionally rejected by `decode`.
+When `verify_signature` is `False`, OxyJWT skips signature verification and does not require `algorithms`. Claim checks follow the merged `options` (defaults turn off time and issuer/audience checks unless you set them back to `True`). Treat the payload as **untrusted** unless you have another integrity layer.
 
 Raises:
 
@@ -79,7 +81,12 @@ Raises:
 - `InvalidAlgorithmError`
 - `MissingRequiredClaimError`
 - `InvalidTokenError`
+- `DecodeError`
 - `InvalidKeyError`
+
+## `decode_complete`
+
+Same parameters as `decode`, but returns a dict with `payload`, `header`, and `signature` (bytes), matching common PyJWT usage.
 
 ## `get_unverified_header`
 
@@ -140,20 +147,21 @@ Use `DecodingKey` for verifying tokens.
 
 ## Exceptions
 
-All OxyJWT exceptions inherit from `OxyJWTError`.
+All OxyJWT exceptions inherit from `OxyJWTError`. The layout matches PyJWT: `InvalidTokenError` is the common base for most decode-time errors; `DecodeError` and `InvalidSignatureError` nest under it.
 
 ```text
 OxyJWTError
 ├── EncodeError
-├── DecodeError
-│   └── InvalidTokenError
-│       ├── InvalidSignatureError
-│       ├── ExpiredSignatureError
-│       ├── ImmatureSignatureError
-│       ├── InvalidAudienceError
-│       ├── InvalidIssuerError
-│       ├── InvalidSubjectError
-│       ├── InvalidAlgorithmError
-│       └── MissingRequiredClaimError
-└── InvalidKeyError
+├── InvalidKeyError
+└── InvalidTokenError
+    ├── DecodeError
+    │   └── InvalidSignatureError
+    ├── ExpiredSignatureError
+    ├── ImmatureSignatureError
+    ├── InvalidAudienceError
+    ├── InvalidIssuerError
+    ├── InvalidIssuedAtError
+    ├── InvalidSubjectError
+    ├── InvalidAlgorithmError
+    └── MissingRequiredClaimError
 ```
