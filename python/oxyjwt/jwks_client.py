@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ssl
+import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
@@ -59,6 +60,7 @@ class PyJWKClient:
         require_https: bool = False,
         headers: Mapping[str, Any] | None = None,
         ssl_context: ssl.SSLContext | None = None,
+        lifespan: float = 300.0,
     ) -> None:
         if not uri or not str(uri).strip():
             raise ValueError("uri must be a non-empty string")
@@ -69,6 +71,11 @@ class PyJWKClient:
         if require_https and parsed.scheme != "https":
             raise PyJWKClientError("JWKS uri must use https when require_https is enabled")
         self._cache_jwk_set = bool(cache_jwk_set)
+        if self._cache_jwk_set and float(lifespan) <= 0:
+            raise PyJWKClientError(
+                f'lifespan must be greater than 0, the input is "{lifespan}"'
+            )
+        self._lifespan = float(lifespan)
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
         if max_bytes < 1:
@@ -82,7 +89,13 @@ class PyJWKClient:
             ssl_context if ssl_context is not None else ssl.create_default_context()
         )
         self._jwk_set: PyJWKSet | None = None
+        self._jwk_set_fetched_at: float | None = None
         self._kid_lru: OrderedDict[str, PyJWK] = OrderedDict()
+
+    def _jwk_set_cache_valid(self) -> bool:
+        if self._jwk_set is None or self._jwk_set_fetched_at is None:
+            return False
+        return time.monotonic() <= self._jwk_set_fetched_at + self._lifespan
 
     def _fetch_raw(self) -> bytes:
         req = urllib.request.Request(
@@ -99,7 +112,7 @@ class PyJWKClient:
             raise PyJWKClientConnectionError(str(e) or type(e).__name__) from e
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet:
-        if self._cache_jwk_set and not refresh and self._jwk_set is not None:
+        if self._cache_jwk_set and not refresh and self._jwk_set_cache_valid():
             return self._jwk_set
         data = self._fetch_raw()
         try:
@@ -112,6 +125,7 @@ class PyJWKClient:
         self._kid_lru.clear()
         if self._cache_jwk_set:
             self._jwk_set = jwks
+            self._jwk_set_fetched_at = time.monotonic()
         return jwks
 
     def get_signing_key(self, kid: str) -> PyJWK:
