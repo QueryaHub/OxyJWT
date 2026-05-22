@@ -296,6 +296,68 @@ def test_jwks_client_require_https_rejects_http_uri() -> None:
         PyJWKClient(uri, require_https=True, timeout=5.0)
 
 
+def test_jwks_client_rejects_disallowed_alg_before_jwks_fetch() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    c = PyJWKClient(uri, cache_jwk_set=False, timeout=5.0)
+    tok = oxyjwt.encode(
+        {"sub": "1", "exp": 9_999_999_999},
+        b"the-shared-secret-xy",
+        algorithm="HS256",
+        headers={"kid": "alpha"},
+    )
+    with pytest.raises(oxyjwt.InvalidAlgorithmError, match="not allowed"):
+        c.get_signing_key_from_jwt(tok, algorithms=["RS256"])
+    assert _JWKHandler.request_count == 0
+
+
+def test_jwks_client_allowed_alg_still_fetches_key() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    c = PyJWKClient(uri, cache_jwk_set=False, timeout=5.0)
+    tok = oxyjwt.encode(
+        {"sub": "1", "exp": 9_999_999_999},
+        b"the-shared-secret-xy",
+        algorithm="HS256",
+        headers={"kid": "alpha"},
+    )
+    jwk = c.get_signing_key_from_jwt(tok, algorithms=["HS256"])
+    assert jwk.key_id == "alpha"
+    assert _JWKHandler.request_count == 1
+
+
+def test_jwks_client_empty_algorithms_allow_list_before_fetch() -> None:
+    uri = _serve_jwks(
+        {
+            "keys": [
+                {
+                    "kty": "oct",
+                    "k": _b64u(b"the-shared-secret-xy"),
+                    "kid": "alpha",
+                }
+            ]
+        }
+    )
+    c = PyJWKClient(uri, timeout=5.0)
+    tok = oxyjwt.encode(
+        {"sub": "1", "exp": 9_999_999_999},
+        b"the-shared-secret-xy",
+        algorithm="HS256",
+        headers={"kid": "alpha"},
+    )
+    with pytest.raises(oxyjwt.InvalidAlgorithmError, match="at least one"):
+        c.get_signing_key_from_jwt(tok, algorithms=[])
+    assert _JWKHandler.request_count == 0
+
+
 def test_jwks_client_get_signing_key_from_jwt_missing_kid_raises() -> None:
     uri = _serve_jwks(
         {

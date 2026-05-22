@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import orjson
 
 from oxyjwt import _oxyjwt
+from oxyjwt.exceptions import InvalidAlgorithmError
 from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 
@@ -111,11 +112,25 @@ class PyJWKClient:
             self._kid_lru.popitem(last=False)
         return jwk
 
-    def get_signing_key_from_jwt(self, jwt: str | bytes) -> PyJWK:
+    def get_signing_key_from_jwt(
+        self,
+        jwt: str | bytes,
+        algorithms: list[str] | None = None,
+    ) -> PyJWK:
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
         header: dict[str, Any] = _oxyjwt.get_unverified_header(token)  # type: ignore[assignment]
         if not isinstance(header, dict):
             header = _header_to_plain_dict(header)
+        if algorithms is not None:
+            if not algorithms:
+                raise InvalidAlgorithmError(
+                    "decode requires at least one allowed algorithm"
+                )
+            alg = header.get("alg")
+            if alg is None or str(alg) not in algorithms:
+                raise InvalidAlgorithmError("The specified alg value is not allowed")
+            if str(alg).lower() == "none":
+                raise InvalidAlgorithmError("the 'none' algorithm is not supported")
         kid = header.get("kid")
         if kid is None or kid == "":
             raise PyJWKClientError("token header is missing a key id (kid)")

@@ -164,10 +164,16 @@ class PyJWKClient:
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
     def get_signing_key(self, kid: str) -> PyJWK: ...
-    def get_signing_key_from_jwt(self, jwt: str | bytes) -> PyJWK: ...
+    def get_signing_key_from_jwt(
+        self,
+        jwt: str | bytes,
+        algorithms: list[str] | None = None,
+    ) -> PyJWK: ...
 ```
 
 If `get_signing_key` does not find `kid` in the cached JWKS, it refetches the document **once** (`get_jwk_set(refresh=True)`) and retries. This supports IdP key rotation without manual cache clearing. A second miss still raises `KeyError` (no further HTTP retries).
+
+When `algorithms` is provided, the token header `alg` is checked against that allow-list **before** any JWKS fetch or `kid` lookup. Disallowed or missing `alg` raises `InvalidAlgorithmError` without HTTP I/O.
 
 - `max_bytes` — maximum JWKS HTTP response size (default 256 KiB). Larger bodies raise `PyJWKClientError`.
 - `require_https` — when `True`, only `https://` URIs are allowed (default `False`).
