@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import warnings
 
 import pytest
 
@@ -52,12 +53,26 @@ def test_pyjwk_rejects_encryption_use() -> None:
         PyJWK(enc_jwk)
 
 
+def test_pyjwkset_warns_when_skipping_invalid_key() -> None:
+    secret = b"good-secret-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    bad_jwk = {"kid": "bad-k"}
+    good_jwk = {"kty": "oct", "k": k, "kid": "good-k"}
+    with pytest.warns(oxyjwt.PyJWKSetSkipWarning, match="index 0") as records:
+        s = PyJWKSet.from_dict({"keys": [bad_jwk, good_jwk]})
+    assert len(records) == 1
+    assert "bad-k" in str(records[0].message)
+    assert len(s.keys) == 1
+    assert s["good-k"].key_id == "good-k"
+
+
 def test_pyjwkset_skips_enc_keys_keeps_signing_keys() -> None:
     secret = b"signing-key-32-bytes-long-ok!!"
     k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
     enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
     sig_jwk = {"kty": "oct", "k": k, "kid": "sig-k", "use": "sig"}
-    s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
+    with pytest.warns(oxyjwt.PyJWKSetSkipWarning, match="enc-k"):
+        s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
     assert len(s.keys) == 1
     assert s["sig-k"].key_id == "sig-k"
     tok = oxyjwt.encode(
@@ -78,5 +93,14 @@ def test_pyjwkset_only_encryption_keys_raises() -> None:
     secret = b"my-secret-32-bytes-long-ok!!!!"
     k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
     enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
-    with pytest.raises(PyJWKSetError, match="usable keys"):
-        PyJWKSet.from_dict({"keys": [enc_jwk]})
+    with pytest.warns(oxyjwt.PyJWKSetSkipWarning):
+        with pytest.raises(PyJWKSetError, match="usable keys"):
+            PyJWKSet.from_dict({"keys": [enc_jwk]})
+
+
+def test_pyjwkset_valid_keys_load_without_warning() -> None:
+    jw = json.loads(_oct_jwk_for_secret(b"no-warn-secret-32-bytes-ok!"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", oxyjwt.PyJWKSetSkipWarning)
+        s = PyJWKSet.from_dict({"keys": [jw]})
+    assert len(s.keys) == 1
