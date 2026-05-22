@@ -75,6 +75,20 @@ def decode(
 ) -> dict[str, Any]: ...
 
 
+def decode_verified_complete(
+    token: str,
+    key: str | bytes | DecodingKey,
+    algorithms: Sequence[str],
+    *,
+    audience: str | Sequence[str] | None = None,
+    issuer: str | Sequence[str] | None = None,
+    subject: str | None = None,
+    leeway: float = 0.0,
+    options: Mapping[str, Any] | None = None,
+    require: Sequence[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]: ...
+
+
 def jws_parse_compact(
     token: str,
 ) -> tuple[bytes, dict[str, Any], bytes, bytes]: ...

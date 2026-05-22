@@ -242,14 +242,14 @@ class PyJWT:
         if issuer is not None and isinstance(issuer, (bytes, bytearray, memoryview)):
             raise TypeError("issuer must be a string, iterable or None")
 
-        _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
-        header: dict[str, Any] = (
-            header_obj
-            if isinstance(header_obj, dict)
-            else _claims_to_plain_dict(header_obj)
-        )
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
+            _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
+            header: dict[str, Any] = (
+                header_obj
+                if isinstance(header_obj, dict)
+                else _claims_to_plain_dict(header_obj)
+            )
             pl_d = _oxyjwt.decode_unverified(token)
             if not isinstance(pl_d, dict):
                 pl_d = _claims_to_plain_dict(pl_d)
@@ -263,7 +263,7 @@ class PyJWT:
             }
         assert algorithms is not None
         req = [str(x) for x in (merged.get("require") or []) if x is not None]
-        dec = _oxyjwt.decode(
+        dec, header_obj, sigb = _oxyjwt.decode_verified_complete(
             token,
             key,
             list(algorithms),
@@ -273,6 +273,11 @@ class PyJWT:
             leeway=lwf,
             options=merged,
             require=req,
+        )
+        header = (
+            header_obj
+            if isinstance(header_obj, dict)
+            else _claims_to_plain_dict(header_obj)
         )
         pl_out: dict[str, Any]
         if not isinstance(dec, dict):
