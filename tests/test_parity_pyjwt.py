@@ -299,3 +299,19 @@ def test_jwks_set_decode_parity() -> None:
     assert jwt.decode(token, kj, algorithms=["HS256"], options=opts) == oxyjwt.decode(
         token, ko, algorithms=["HS256"], options=opts
     )
+
+
+def test_custom_string_header_encode_parity() -> None:
+    payload = {"sub": "u", "exp": 9_999_999_999}
+    headers = {"kid": "k1", "X-Custom": "trace-1", "tenant": "acme"}
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    t_j = jwt.encode(payload, secret, algorithm="HS256", headers=headers)
+    t_o = oxyjwt.encode(payload, secret, algorithm="HS256", headers=headers)
+    assert jwt.get_unverified_header(t_j) == oxyjwt.get_unverified_header(t_o)
+    assert jwt.get_unverified_header(t_o) == {
+        "alg": "HS256",
+        "kid": "k1",
+        "typ": "JWT",
+        "X-Custom": "trace-1",
+        "tenant": "acme",
+    }

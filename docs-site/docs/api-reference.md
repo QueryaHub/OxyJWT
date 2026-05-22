@@ -20,7 +20,7 @@ Parameters:
 - `payload`: JSON-compatible mapping to place in the token claims.
 - `key`: raw HMAC secret or an `EncodingKey`.
 - `algorithm`: signing algorithm. Defaults to `HS256`.
-- `headers`: optional JWT header values such as `kid` and `typ`.
+- `headers`: optional JWT header values such as `kid`, `typ`, and custom string parameters (for example `X-Request-Id`). See [Encoding — Headers](usage/encoding.md#headers).
 
 Raises:
 
