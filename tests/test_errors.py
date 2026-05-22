@@ -19,6 +19,17 @@ def test_malformed_token_error() -> None:
         oxyjwt.decode("not-a-jwt", "secret", algorithms=["HS256"])
 
 
+def test_too_many_compact_segments_rejected_consistently() -> None:
+    token = oxyjwt.encode({"exp": int(time.time()) + 60}, "secret", algorithm="HS256")
+    extra = f"{token}.extra"
+    with pytest.raises(oxyjwt.DecodeError, match="Too many segments"):
+        oxyjwt.decode(extra, "secret", algorithms=["HS256"])
+    with pytest.raises(oxyjwt.DecodeError, match="Too many segments"):
+        oxyjwt.decode_unverified(extra)
+    with pytest.raises(oxyjwt.DecodeError, match="Too many segments"):
+        oxyjwt.get_unverified_header(extra)
+
+
 def test_raw_key_is_rejected_for_asymmetric_algorithms() -> None:
     with pytest.raises(oxyjwt.InvalidKeyError):
         oxyjwt.encode(

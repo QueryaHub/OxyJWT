@@ -15,8 +15,11 @@ use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation;
 
-fn ensure_token_within_limit(token: &str) -> PyResult<()> {
-    jws::check_compact_token_size(token).map_err(errors::decode_error)
+/// Size limit plus strict three-segment compact JWS check (before jsonwebtoken).
+fn ensure_valid_compact_jwt(token: &str) -> PyResult<()> {
+    jws::split_compact_segments(token)
+        .map(|_| ())
+        .map_err(errors::decode_error)
 }
 
 #[pyfunction]
@@ -68,7 +71,7 @@ pub fn decode(
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -113,7 +116,7 @@ pub fn decode_verified_complete(
     require: Option<Vec<String>>,
     detached_payload: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -222,7 +225,7 @@ fn map_rfc7797_decode_error(message: String) -> PyErr {
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let token = token.to_owned();
     let header = py
         .detach(move || jws::parse_compact_header_json(&token))
@@ -233,7 +236,7 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let token = token.to_owned();
     let token_data = py
         .detach(move || dangerous::insecure_decode::<Value>(&token))
