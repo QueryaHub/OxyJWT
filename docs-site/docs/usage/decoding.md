@@ -112,14 +112,25 @@ claims = oxyjwt.decode(
 Supported options:
 
 - `verify_signature` — verify the JWS signature (default `True`). When `False`, `algorithms` is not required; treat claims as untrusted.
-- `verify_exp` — validate `exp`.
-- `verify_nbf` — validate `nbf`.
-- `verify_iat` — validate `iat` (Python-side check when enabled).
+- `verify_exp` — validate `exp` (Rust/jsonwebtoken on verified decode; Python on unverified decode).
+- `verify_nbf` — validate `nbf` (Rust on verified decode; Python on unverified decode).
+- `verify_iat` — validate `iat` (always Python; jsonwebtoken does not implement `iat` checks).
 - `verify_aud` — validate `aud` when `audience` is provided.
 - `verify_iss` — validate `iss` when `issuer` is provided.
 - `verify_sub` — validate `sub` when `subject` is provided (defaults to `False` when `verify_signature` is `False`).
 - `require_exp` — require the `exp` claim.
 - `require` — list of claim names that must be present.
+
+### Where claims are validated
+
+| Claim / check | Verified decode (`verify_signature=True`) | Unverified decode |
+|---------------|-------------------------------------------|-------------------|
+| Signature, `alg` | Rust (jsonwebtoken) | Skipped |
+| `exp`, `nbf` | Rust | Python |
+| `iat` | Python | Python |
+| `aud`, `iss`, `sub` | Rust when parameters/options enable it; Python also enforces PyJWT-style rules (e.g. `aud` present without an `audience` argument) | Python |
+
+Use integer-second `leeway` for consistent `exp`/`nbf` behavior on verified decode (Rust uses whole seconds). Fractional leeway applies fully to `iat` (Python).
 
 !!! warning "`verify_signature=False` is not the same as `decode_unverified`"
 

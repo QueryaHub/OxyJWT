@@ -15,6 +15,7 @@
 - `PyJWKClient.get_signing_key_from_jwt` optional `algorithms` allow-list: rejects disallowed header `alg` before JWKS lookup.
 - `PyJWK` rejects JWKs with `use: enc` (encryption keys) for signature verification paths.
 - `PyJWKSet` emits `PyJWKSetSkipWarning` when unusable JWK entries are skipped (index and `kid` in message).
+- Claim validation split documented: Rust validates `exp`/`nbf` on verified decode; Python validates `iat` and PyJWT-style audience/issuer/sub rules. `verify_sub=False` no longer validates `sub` in Rust when `subject` is passed.
 
 ### Performance
 
