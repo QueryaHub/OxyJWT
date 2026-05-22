@@ -117,12 +117,19 @@ Supported options:
 - `verify_iat` — validate `iat` (Python-side check when enabled).
 - `verify_aud` — validate `aud` when `audience` is provided.
 - `verify_iss` — validate `iss` when `issuer` is provided.
+- `verify_sub` — validate `sub` when `subject` is provided (defaults to `False` when `verify_signature` is `False`).
 - `require_exp` — require the `exp` claim.
 - `require` — list of claim names that must be present.
 
 !!! warning "`verify_signature=False` is not the same as `decode_unverified`"
 
-    With `verify_signature=False`, OxyJWT still parses the compact JWT and can run claim checks according to your `options`. You still must not trust `sub`, roles, or other claims for authorization unless you have another integrity guarantee.
+    With `verify_signature=False`, OxyJWT still parses the compact JWT and can run claim checks according to your `options`. OxyJWT emits `InsecureDecodeWarning` when signature verification is disabled.
+
+    The `subject` argument is **ignored** unless you set `options["verify_sub"]` to `True` (off by default when `verify_signature` is `False`). Even then, subject matching does not prove the token was signed by your issuer—use verified decode in production.
+
+    `options["require"]` only checks that claims are **present**, not authentic, when the signature is not verified.
+
+    You still must not trust `sub`, roles, or other claims for authorization unless you have another integrity guarantee.
 
     `decode_unverified` and `get_unverified_header` are for inspection and debugging only; they skip cryptographic verification entirely.
 
