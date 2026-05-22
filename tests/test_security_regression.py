@@ -1,7 +1,8 @@
-"""Security regression tests for OxyJWT 0.4.0.
+"""Security smoke tests for OxyJWT (0.4.x / 0.5.x).
 
-Covers the main 0.4.0 security fixes in one module so CI always exercises them
-without extra env flags. See milestone 0.4.0 issues #1–#12 and related JWKS/API work.
+High-signal security behaviors in one module so default CI exercises them without
+extra env flags. Deeper coverage also lives in `tests/test_validation.py`,
+`tests/test_errors.py`, and `tests/test_detached_jws.py`.
 """
 from __future__ import annotations
 
@@ -223,6 +224,40 @@ def test_security_oversized_detached_payload_rejected() -> None:
             algorithms=["HS256"],
             detached_payload=huge,
         )
+
+
+# --- Strict compact segments (issue #60) ---
+
+
+def test_security_extra_jwt_segment_rejected() -> None:
+    token = oxyjwt.encode({"exp": int(time.time()) + 3600}, "secret", algorithm="HS256")
+    malformed = f"{token}.extra"
+    with pytest.raises(DecodeError, match="Too many segments"):
+        oxyjwt.decode(malformed, "secret", algorithms=["HS256"])
+
+
+# --- Issuer API hardening (issue #69) ---
+
+
+def test_security_issuer_bytes_rejected_at_api() -> None:
+    token = oxyjwt.encode({"exp": int(time.time()) + 3600}, "secret")
+    with pytest.raises(TypeError, match="issuer must be a string"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            issuer=b"https://issuer.example",  # type: ignore[arg-type]
+        )
+
+
+# --- JWKS HTTPS requirement (issue #7) ---
+
+
+def test_security_jwks_client_rejects_http_when_require_https() -> None:
+    jw = {"kty": "oct", "k": _b64u(b"the-shared-secret-xy"), "kid": "alpha"}
+    uri = _serve_jwks({"keys": [jw]})
+    with pytest.raises(PyJWKClientError, match="https"):
+        PyJWKClient(uri, require_https=True, timeout=5.0)
 
 
 # --- Algorithm confusion before JWKS fetch (issue #8) ---
