@@ -82,13 +82,14 @@ def test_issuer_list_unverified_decode() -> None:
         {"exp": int(time.time()) + 3600, "iss": "https://primary.example"},
         "secret",
     )
-    out = oxyjwt.decode(
-        token,
-        "secret",
-        algorithms=["HS256"],
-        options={"verify_signature": False},
-        issuer=["https://primary.example", "https://backup.example"],
-    )
+    with pytest.warns(oxyjwt.InsecureDecodeWarning):
+        out = oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            options={"verify_signature": False},
+            issuer=["https://primary.example", "https://backup.example"],
+        )
     assert out["iss"] == "https://primary.example"
 
 
@@ -126,16 +127,81 @@ def test_mixed_algorithm_families_are_rejected() -> None:
 
 def test_verify_signature_false_skips_signature() -> None:
     token = oxyjwt.encode({"sub": "u", "exp": int(time.time()) + 60}, "secret")
-    out = oxyjwt.decode(
-        token,
-        "wrong-secret",
-        options={
-            "verify_signature": False,
-            "verify_exp": False,
-            "verify_nbf": False,
-            "verify_iat": False,
-            "verify_aud": False,
-            "verify_iss": False,
-        },
-    )
+    with pytest.warns(oxyjwt.InsecureDecodeWarning, match="signature verification"):
+        out = oxyjwt.decode(
+            token,
+            "wrong-secret",
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_nbf": False,
+                "verify_iat": False,
+                "verify_aud": False,
+                "verify_iss": False,
+            },
+        )
     assert out["sub"] == "u"
+
+
+def test_unverified_decode_warns_when_subject_ignored() -> None:
+    token = oxyjwt.encode(
+        {"sub": "attacker", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    with pytest.warns(oxyjwt.InsecureDecodeWarning) as records:
+        out = oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            options={"verify_signature": False},
+            subject="victim",
+        )
+    assert out["sub"] == "attacker"
+    messages = [str(w.message) for w in records.list]
+    assert any("subject argument is ignored" in m for m in messages)
+
+
+def test_unverified_decode_subject_with_verify_sub() -> None:
+    token = oxyjwt.encode(
+        {"sub": "user-a", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    with pytest.warns(oxyjwt.InsecureDecodeWarning):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            options={"verify_signature": False, "verify_sub": True},
+            subject="user-a",
+        )
+
+    with pytest.warns(oxyjwt.InsecureDecodeWarning):
+        with pytest.raises(oxyjwt.InvalidSubjectError):
+            oxyjwt.decode(
+                token,
+                "secret",
+                algorithms=["HS256"],
+                options={"verify_signature": False, "verify_sub": True},
+                subject="user-b",
+            )
+
+
+def test_unverified_decode_warns_on_require() -> None:
+    token = oxyjwt.encode(
+        {"sub": "u", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    with pytest.warns(oxyjwt.InsecureDecodeWarning) as records:
+        oxyjwt.decode(
+            token,
+            "secret",
+            options={
+                "verify_signature": False,
+                "verify_exp": False,
+                "require": ["sub"],
+            },
+        )
+    assert any(
+        "require" in str(w.message) and "presence" in str(w.message)
+        for w in records.list
+    )

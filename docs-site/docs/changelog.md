@@ -7,6 +7,11 @@
 - `PyJWKClient.get_signing_key` refetches JWKS once when `kid` is missing from the cached set (key rotation).
 - `decode` / `decode_complete` accept `issuer` as a string or iterable (aligned with docs and Rust validation).
 
+### Security
+
+- `InsecureDecodeWarning` when `verify_signature` is `False`; additional warnings when `subject` or `require` are used without signature verification.
+- `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.
+
 ## 0.3.0
 
 Documentation, PyJWT parity, and operational polish. PyPI classifiers now mark the project as **Beta**; the API remains pre-1.0. See [Versioning](versioning.md). Security reporting is described in [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).

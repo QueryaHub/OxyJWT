@@ -31,3 +31,10 @@ This policy covers the `oxyjwt` Python package and its Rust extension (`_oxyjwt`
 ## JWT usage
 
 OxyJWT implements JWT/JWS signing and verification. Correct use still depends on application choices (algorithm allow-lists, audience/issuer checks, secret management). Read the [Security](docs-site/docs/security.md) documentation before deploying to production.
+
+### `verify_signature=False`
+
+Decoding with `options["verify_signature"] = False` skips cryptographic verification. OxyJWT emits `InsecureDecodeWarning` in that case. Do not use unverified payloads for authorization.
+
+- The `subject` parameter is ignored unless `verify_sub` is explicitly `True` (it defaults to `False` when the signature is not verified).
+- `require` only checks claim **presence**, not that the token was signed by your trust anchor.

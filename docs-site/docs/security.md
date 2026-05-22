@@ -77,6 +77,16 @@ Demo examples use short strings because they are readable. Production HMAC secre
 
 Do not print tokens, private keys, or HMAC secrets in logs.
 
+## `verify_signature=False`
+
+`decode` with `options["verify_signature"] = False` parses the token without verifying the JWS signature. OxyJWT warns with `InsecureDecodeWarning`.
+
+- Do not use the returned claims for authentication or authorization.
+- `subject` is ignored unless `verify_sub` is `True` (not the default when the signature is off).
+- `require` only asserts that named claims exist in the parsed JSON, not that they are authentic.
+
+Prefer verified `decode` with an explicit `algorithms` allow-list in production.
+
 ## Treat Unverified Helpers As Inspection Only
 
 `get_unverified_header` and `decode_unverified` do not verify the signature and do not validate claims.
