@@ -21,6 +21,7 @@
 - `decode_unverified`, `get_unverified_header`, and `jws_parse_compact` release the GIL during native JWS/JWT parsing.
 - `PyJWKClient` accepts optional `headers` and `ssl_context` (PyJWT 2.8 subset).
 - `PyJWKClient` `lifespan` TTL (default 300s) for cached JWKS when `cache_jwk_set=True`.
+- `strict_aud` decode option for exact string audience matching (PyJWT parity).
 
 ### Performance
 

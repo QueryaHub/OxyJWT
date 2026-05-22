@@ -116,6 +116,7 @@ Supported options:
 - `verify_nbf` — validate `nbf` (Rust on verified decode; Python on unverified decode).
 - `verify_iat` — validate `iat` (always Python; jsonwebtoken does not implement `iat` checks).
 - `verify_aud` — validate `aud` when `audience` is provided.
+- `strict_aud` — when `True`, require a single string `audience` argument and an exact string `aud` claim (no list matching; PyJWT parity).
 - `verify_iss` — validate `iss` when `issuer` is provided.
 - `verify_sub` — validate `sub` when `subject` is provided (defaults to `False` when `verify_signature` is `False`).
 - `require_exp` — require the `exp` claim.
