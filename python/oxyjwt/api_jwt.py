@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 import warnings
 from calendar import timegm
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from json import JSONEncoder
 from typing import Any, Callable, cast
@@ -56,13 +56,13 @@ def _leeway_seconds(leeway: float | timedelta) -> float:
     return float(leeway)
 
 
-def _claims_to_plain_dict(obj: Any) -> dict[str, Any]:
-    """Round-trip through JSON so Rust/PyO3-derived values become plain dicts."""
-    raw = orjson.dumps(obj, default=str)
-    out = orjson.loads(raw)
-    if not isinstance(out, dict):
-        raise TypeError("expected JSON object")
-    return cast("dict[str, Any]", out)
+def _as_plain_dict(obj: Any) -> dict[str, Any]:
+    """Normalize claims/header to a plain dict without JSON round-trip."""
+    if isinstance(obj, dict):
+        return cast("dict[str, Any]", obj)
+    if isinstance(obj, Mapping):
+        return {str(k): v for k, v in obj.items()}
+    raise TypeError("expected JSON object for JWT claims or header")
 
 
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
@@ -245,14 +245,8 @@ class PyJWT:
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
             _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
-            header: dict[str, Any] = (
-                header_obj
-                if isinstance(header_obj, dict)
-                else _claims_to_plain_dict(header_obj)
-            )
-            pl_d = _oxyjwt.decode_unverified(token)
-            if not isinstance(pl_d, dict):
-                pl_d = _claims_to_plain_dict(pl_d)
+            header = _as_plain_dict(header_obj)
+            pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
             self._validate_claims(
                 pl_d, merged, audience, issuer, subject, lwf
             )
@@ -274,16 +268,8 @@ class PyJWT:
             options=merged,
             require=req,
         )
-        header = (
-            header_obj
-            if isinstance(header_obj, dict)
-            else _claims_to_plain_dict(header_obj)
-        )
-        pl_out: dict[str, Any]
-        if not isinstance(dec, dict):
-            pl_out = _claims_to_plain_dict(dec)
-        else:
-            pl_out = dec
+        header = _as_plain_dict(header_obj)
+        pl_out = _as_plain_dict(dec)
         self._validate_claims(pl_out, merged, audience, issuer, subject, lwf)
         return {
             "payload": pl_out,
