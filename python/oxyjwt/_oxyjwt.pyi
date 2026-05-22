@@ -54,7 +54,7 @@ def encode(
 
 
 def encode_json(
-    payload_json: str,
+    payload_json: str | bytes,
     key: str | bytes | EncodingKey,
     algorithm: str = "HS256",
     headers: Mapping[str, Any] | None = None,
@@ -73,6 +73,21 @@ def decode(
     options: Mapping[str, Any] | None = None,
     require: Sequence[str] | None = None,
 ) -> dict[str, Any]: ...
+
+
+def decode_verified_complete(
+    token: str,
+    key: str | bytes | DecodingKey,
+    algorithms: Sequence[str],
+    *,
+    audience: str | Sequence[str] | None = None,
+    issuer: str | Sequence[str] | None = None,
+    subject: str | None = None,
+    leeway: float = 0.0,
+    options: Mapping[str, Any] | None = None,
+    require: Sequence[str] | None = None,
+    detached_payload: bytes | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], bytes]: ...
 
 
 def jws_parse_compact(

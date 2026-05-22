@@ -23,6 +23,14 @@ The Python package lives under `python/`. Pytest is configured to prefer that tr
 - `pytest` (with optional `pytest --cov=oxyjwt`)
 - `mkdocs build --strict -f docs-site/mkdocs.yml` if you change documentation
 
+## Branching (0.4.0)
+
+Integration branch is **`dev`**. Feature work uses one branch per issue from `dev`, PRs target `dev`.
+
+Always sync before branching: `git fetch --all --prune` then `git pull --ff-only origin dev`. Run the full Rust + pytest suite before opening a PR.
+
+Use `gh` to set **labels** (`p0`/`p1`/`p2`, `security`, …) and milestone **0.4.0** on issues and PRs. See [docs/GITFLOW.md](docs/GITFLOW.md) and [milestone 0.4.0](https://github.com/QueryaHub/OxyJWT/milestone/1).
+
 ## Pull requests
 
 - Keep changes focused and match existing style (formatting, typing, minimal comments).

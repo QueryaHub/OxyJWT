@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased
+
+(No changes yet.)
+
+## 0.4.0 — 2026-05-22
+
+Production hardening release: security fixes, performance improvements, expanded PyJWT/JWKS parity, public typing stubs, and stricter CI. The API remains pre-1.0 (Beta). See [Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
+### Upgrading from 0.3.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface; behavior is stricter in several security-sensitive paths (see **Security** below).
+- New warnings: `InsecureDecodeWarning` when `verify_signature=False`; `PyJWKSetSkipWarning` when JWKS entries are skipped.
+- `PyJWKClient.cache_keys` defaults to **`False`** (PyJWT parity); opt in for per-`kid` LRU caching.
+- `decode` / `decode_complete` accept **`issuer`** as a string or iterable.
+- **`strict_aud`**, **`detached_payload`** (RFC 7797 when `b64: false`), and custom string JWT header fields on `encode`.
+- Public **`.pyi`** stubs and `py.typed` for IDE/mypy users.
+
+### Added
+
+- `tests/test_jwk_rsa_ec.py` — RSA and EC JWK/JWKS parity tests with real `n`/`e` and `crv`/`x`/`y` shapes.
+- RFC 7797 detached payload decode via `detached_payload` when the protected header sets `b64` to `false`.
+- `encode` accepts custom string JWT header parameters beyond `alg` / `typ` / `cty` / `kid`, plus optional standard string JWS fields (`jku`, `x5u`, `x5t`, `x5t#S256`, `url`, `nonce`).
+- Public `.pyi` stubs for `api_jwt`, `jwk`, `jwks_client`, `jwk_exc`, and `warnings`; `py.typed` marker for PEP 561.
+- Mypy CI job and `tests/typing/` smoke checks for the public API surface.
+
+### Fixed
+
+- `PyJWKClient.get_signing_key` refetches JWKS once when `kid` is missing from the cached set (key rotation).
+- `decode` / `decode_complete` accept `issuer` as a string or iterable (aligned with docs and Rust validation).
+
+### Security
+
+- HMAC secret buffers copied from Python are held in `Zeroizing<Vec<u8>>` and cleared after `EncodingKey` / `DecodingKey` construction and ephemeral `from_secret` decode paths.
+- Compact JWT strings larger than 256 KiB are rejected with `DecodeError` before base64/JSON parsing (all decode and unverified entry points).
+- `InsecureDecodeWarning` when `verify_signature` is `False`; additional warnings when `subject` or `require` are used without signature verification.
+- `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.
+- `PyJWKClient` `max_bytes` (default 256 KiB) and optional `require_https` for JWKS fetches.
+- `PyJWKClient.get_signing_key_from_jwt` optional `algorithms` allow-list: rejects disallowed header `alg` before JWKS lookup.
+- `PyJWK` rejects JWKs with `use: enc` (encryption keys) for signature verification paths.
+- `PyJWKSet` emits `PyJWKSetSkipWarning` when unusable JWK entries are skipped (index and `kid` in message).
+- Claim validation split documented: Rust validates `exp`/`nbf` on verified decode; Python validates `iat` and PyJWT-style audience/issuer/sub rules. `verify_sub=False` no longer validates `sub` in Rust when `subject` is passed.
+- Fractional `leeway` on verified decode: Python validates `exp`/`nbf` with float semantics; Rust uses rounded whole seconds when `leeway` is an integer.
+- `PyJWKSet` O(1) lookup by `kid`; `PyJWK.key` parses `DecodingKey` lazily on first access.
+- `decode_unverified`, `get_unverified_header`, and `jws_parse_compact` release the GIL during native JWS/JWT parsing.
+- `PyJWKClient` accepts optional `headers` and `ssl_context` (PyJWT 2.8 subset).
+- `PyJWKClient` `lifespan` TTL (default 300s) for cached JWKS when `cache_jwk_set=True`.
+- `strict_aud` decode option for exact string audience matching (PyJWT parity).
+- `PyJWKClient` `cache_keys` parameter (default `False`, PyJWT parity); per-`kid` LRU is opt-in.
+- `tests/test_security_regression.py` — dedicated 0.4.0 security regression suite (always run in CI).
+- Benchmark CI smoke: HS256 OxyJWT vs PyJWT ratio gates tightened to ≥75% (was 25%); decode checked too. Docs describe smoke / extended / full workflows.
+- Expanded `PyJWKClient` API reference; JWKS security notes cross-linked from `SECURITY.md` and `security.md`.
+
+### Performance
+
+- Encode path passes `orjson` output as bytes into Rust (`serde_json::from_slice`), removing an extra UTF-8 decode and `from_str` parse.
+- Verified `decode_complete` uses `decode_verified_complete` in Rust (one `jwt_decode` parse) instead of `jws_parse_compact` plus a second full decode.
+- Removed `orjson` dumps/loads round-trip when normalizing decode claims and headers (`_as_plain_dict`).
+
 ## 0.3.0
 
 Documentation, PyJWT parity, and operational polish. PyPI classifiers now mark the project as **Beta**; the API remains pre-1.0. See [Versioning](versioning.md). Security reporting is described in [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).

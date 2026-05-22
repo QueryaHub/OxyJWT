@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
+import orjson
 import pytest
 
 import oxyjwt
@@ -16,6 +18,67 @@ def _payload() -> dict[str, object]:
         "exp": int(time.time()) + 3600,
         "nbf": int(time.time()) - 1,
     }
+
+
+def test_encode_datetime_claim_roundtrip() -> None:
+    exp = datetime.now(timezone.utc)
+    token = oxyjwt.encode(
+        {"sub": "u", "exp": exp},
+        "secret",
+        algorithm="HS256",
+    )
+    decoded = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded["sub"] == "u"
+    assert isinstance(decoded["exp"], int)
+
+
+def test_decode_nested_claim_without_json_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roundtrips: list[int] = []
+    original_loads = orjson.loads
+
+    def tracking_loads(data: bytes | bytearray | memoryview) -> object:
+        roundtrips.append(1)
+        return original_loads(data)
+
+    monkeypatch.setattr(orjson, "loads", tracking_loads)
+
+    payload = {
+        "sub": "user-123",
+        "exp": int(time.time()) + 3600,
+        "meta": {"role": "admin", "scopes": ["read", "write"]},
+    }
+    token = oxyjwt.encode(payload, "secret", algorithm="HS256")
+    out = oxyjwt.decode_complete(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert out["payload"]["meta"] == {"role": "admin", "scopes": ["read", "write"]}
+    assert roundtrips == []
+
+
+def test_decode_complete_returns_header_and_signature() -> None:
+    token = oxyjwt.encode(_payload(), "secret", algorithm="HS256", headers={"kid": "k1"})
+    out = oxyjwt.decode_complete(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        audience="api",
+        issuer="issuer",
+    )
+    assert out["payload"]["sub"] == "user-123"
+    assert out["header"]["alg"] == "HS256"
+    assert out["header"]["kid"] == "k1"
+    assert isinstance(out["signature"], (bytes, bytearray, memoryview))
+    assert len(out["signature"]) > 0
 
 
 def test_hs256_roundtrip_with_raw_secret() -> None:

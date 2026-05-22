@@ -11,7 +11,7 @@ pub enum KeyFamily {
     Jwk,
 }
 
-pub fn parse_algorithm(name: &str) -> pyo3::PyResult<Algorithm> {
+pub fn parse_algorithm_name(name: &str) -> Result<Algorithm, String> {
     match name {
         "HS256" => Ok(Algorithm::HS256),
         "HS384" => Ok(Algorithm::HS384),
@@ -25,13 +25,13 @@ pub fn parse_algorithm(name: &str) -> pyo3::PyResult<Algorithm> {
         "ES256" => Ok(Algorithm::ES256),
         "ES384" => Ok(Algorithm::ES384),
         "EdDSA" => Ok(Algorithm::EdDSA),
-        "none" | "None" | "NONE" => Err(errors::invalid_algorithm(
-            "the 'none' algorithm is not supported",
-        )),
-        other => Err(errors::invalid_algorithm(format!(
-            "unsupported JWT algorithm: {other}"
-        ))),
+        "none" | "None" | "NONE" => Err("the 'none' algorithm is not supported".to_string()),
+        other => Err(format!("unsupported JWT algorithm: {other}")),
     }
+}
+
+pub fn parse_algorithm(name: &str) -> pyo3::PyResult<Algorithm> {
+    parse_algorithm_name(name).map_err(errors::invalid_algorithm)
 }
 
 pub fn algorithm_name(algorithm: Algorithm) -> &'static str {

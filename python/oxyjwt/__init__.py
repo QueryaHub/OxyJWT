@@ -1,6 +1,6 @@
 """OxyJWT public API (PyJWT-shaped module surface)."""
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 from ._oxyjwt import (
     DecodingKey,
@@ -32,6 +32,11 @@ from .exceptions import (
 )
 from .jwk import PyJWK, PyJWKSet
 from .jwks_client import PyJWKClient
+from .warnings import (
+    InsecureDecodeWarning,
+    PyJWKSetSkipWarning,
+    RemovedInPyJWT3Warning,
+)
 
 __all__ = [
     "__version__",
@@ -49,6 +54,8 @@ __all__ = [
     "DecodeError",
     "ExpiredSignatureError",
     "ImmatureSignatureError",
+    "InsecureDecodeWarning",
+    "PyJWKSetSkipWarning",
     "InvalidAlgorithmError",
     "InvalidAudienceError",
     "InvalidIssuedAtError",
@@ -60,6 +67,7 @@ __all__ = [
     "MissingRequiredClaimError",
     "OxyJWTError",
     "PyJWTError",
+    "RemovedInPyJWT3Warning",
     "decode",
     "decode_complete",
     "decode_unverified",

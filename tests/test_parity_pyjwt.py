@@ -6,6 +6,7 @@ import time
 from datetime import timedelta
 
 import jwt
+import pytest
 
 import oxyjwt
 
@@ -86,6 +87,52 @@ def test_audience_decode_parity() -> None:
     )
 
 
+def test_strict_aud_decode_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    payload = {
+        "sub": "u",
+        "aud": "api",
+        "exp": int(time.time()) + 600,
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    opts = {"strict_aud": True}
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="api",
+        options=opts,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="api",
+        options=opts,
+    )
+
+    list_aud_token = jwt.encode(
+        {**payload, "aud": ["api", "other"]},
+        secret,
+        algorithm="HS256",
+    )
+    with pytest.raises(jwt.InvalidAudienceError):
+        jwt.decode(
+            list_aud_token,
+            secret,
+            algorithms=["HS256"],
+            audience="api",
+            options=opts,
+        )
+    with pytest.raises(oxyjwt.InvalidAudienceError):
+        oxyjwt.decode(
+            list_aud_token,
+            secret,
+            algorithms=["HS256"],
+            audience="api",
+            options=opts,
+        )
+
+
 def test_issuer_decode_parity() -> None:
     secret = "hmac-secret-32-bytes-long-ok!!!"
     payload = {
@@ -104,6 +151,28 @@ def test_issuer_decode_parity() -> None:
         secret,
         algorithms=["HS256"],
         issuer="https://issuer.example",
+    )
+
+
+def test_issuer_list_decode_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    payload = {
+        "sub": "u",
+        "iss": "https://issuer.example",
+        "exp": int(time.time()) + 600,
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    issuers = ["https://issuer.example", "https://backup.example"]
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=issuers,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=issuers,
     )
 
 
@@ -145,6 +214,26 @@ def test_require_claim_parity() -> None:
     assert jwt.decode(
         token, secret, algorithms=["HS256"], options=options
     ) == oxyjwt.decode(token, secret, algorithms=["HS256"], options=options)
+
+
+def test_fractional_leeway_exp_boundary_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    now = int(time.time())
+    # exp must be strictly after int(now): PyJWT compares exp to float time.time(),
+    # so exp==now fails for most of each second (parity flake on CI).
+    payload = {"sub": "u", "exp": now + 1}
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        leeway=0.9,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        leeway=0.9,
+    )
 
 
 def test_leeway_timedelta_parity() -> None:
@@ -210,3 +299,19 @@ def test_jwks_set_decode_parity() -> None:
     assert jwt.decode(token, kj, algorithms=["HS256"], options=opts) == oxyjwt.decode(
         token, ko, algorithms=["HS256"], options=opts
     )
+
+
+def test_custom_string_header_encode_parity() -> None:
+    payload = {"sub": "u", "exp": 9_999_999_999}
+    headers = {"kid": "k1", "X-Custom": "trace-1", "tenant": "acme"}
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    t_j = jwt.encode(payload, secret, algorithm="HS256", headers=headers)
+    t_o = oxyjwt.encode(payload, secret, algorithm="HS256", headers=headers)
+    assert jwt.get_unverified_header(t_j) == oxyjwt.get_unverified_header(t_o)
+    assert jwt.get_unverified_header(t_o) == {
+        "alg": "HS256",
+        "kid": "k1",
+        "typ": "JWT",
+        "X-Custom": "trace-1",
+        "tenant": "acme",
+    }

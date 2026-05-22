@@ -1,10 +1,11 @@
 """PyJWT-compatible JWT API (encode / decode / decode_complete)."""
 from __future__ import annotations
 
+import math
 import time
 import warnings
 from calendar import timegm
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta
 from json import JSONEncoder
 from typing import Any, Callable, cast
@@ -19,9 +20,10 @@ from oxyjwt.exceptions import (
     InvalidAudienceError,
     InvalidIssuedAtError,
     InvalidIssuerError,
+    InvalidSubjectError,
     MissingRequiredClaimError,
 )
-from oxyjwt.warnings import RemovedInPyJWT3Warning
+from oxyjwt.warnings import InsecureDecodeWarning, RemovedInPyJWT3Warning
 
 _DEFAULT_DECODE_OPTIONS: dict[str, Any] = {
     "verify_signature": True,
@@ -30,8 +32,15 @@ _DEFAULT_DECODE_OPTIONS: dict[str, Any] = {
     "verify_iat": True,
     "verify_aud": True,
     "verify_iss": True,
+    "verify_sub": True,
+    "strict_aud": False,
     "require": [],
 }
+
+_UNVERIFIED_DECODE_WARNING = (
+    "Unverified JWT decoding is insecure. The token was parsed without "
+    "signature verification; claims must not be used for authorization."
+)
 
 
 def _sig_as_bytes(sig: object) -> bytes:
@@ -49,13 +58,19 @@ def _leeway_seconds(leeway: float | timedelta) -> float:
     return float(leeway)
 
 
-def _claims_to_plain_dict(obj: Any) -> dict[str, Any]:
-    """Round-trip through JSON so Rust/PyO3-derived values become plain dicts."""
-    raw = orjson.dumps(obj, default=str)
-    out = orjson.loads(raw)
-    if not isinstance(out, dict):
-        raise TypeError("expected JSON object")
-    return cast("dict[str, Any]", out)
+def _leeway_is_whole_seconds(leeway: float) -> bool:
+    """True when leeway is an integer number of seconds (Rust jsonwebtoken path)."""
+    rounded = round(leeway)
+    return math.isclose(leeway, rounded, rel_tol=0.0, abs_tol=1e-9)
+
+
+def _as_plain_dict(obj: Any) -> dict[str, Any]:
+    """Normalize claims/header to a plain dict without JSON round-trip."""
+    if isinstance(obj, dict):
+        return cast("dict[str, Any]", obj)
+    if isinstance(obj, Mapping):
+        return {str(k): v for k, v in obj.items()}
+    raise TypeError("expected JSON object for JWT claims or header")
 
 
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
@@ -102,9 +117,8 @@ class PyJWT:
                 option=opts,
                 default=_json_default_from_encoder(json_encoder),
             )
-        body = body_b.decode("utf-8")
         alg = algorithm if algorithm is not None else "HS256"
-        return _oxyjwt.encode_json(body, key, alg, headers)
+        return _oxyjwt.encode_json(body_b, key, alg, headers)
 
     def decode(
         self,
@@ -116,7 +130,7 @@ class PyJWT:
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
         subject: str | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
     ) -> Any:
@@ -127,10 +141,6 @@ class PyJWT:
                 f"Unsupported kwargs: {tuple(kwargs.keys())}",
                 RemovedInPyJWT3Warning,
                 stacklevel=2,
-            )
-        if detached_payload is not None:
-            raise NotImplementedError(
-                "detached JWS payload is not supported in this OxyJWT release"
             )
         return self.decode_complete(
             jwt,
@@ -155,7 +165,7 @@ class PyJWT:
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
         subject: str | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -167,11 +177,11 @@ class PyJWT:
                 RemovedInPyJWT3Warning,
                 stacklevel=2,
             )
-        if detached_payload is not None:
-            raise NotImplementedError(
-                "detached JWS payload is not supported in this OxyJWT release"
-            )
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
+        if detached_payload is not None and not isinstance(
+            detached_payload, (bytes, bytearray, memoryview)
+        ):
+            raise TypeError("detached_payload must be bytes")
         # Match PyJWT: JWS/algorithm gating uses call-only `options` + setdefault, then merge for claims
         co: dict[str, Any] = dict(options or {})
         co.setdefault("verify_signature", True)
@@ -184,35 +194,76 @@ class PyJWT:
                 stacklevel=2,
             )
         if not co.get("verify_signature", True):
+            warnings.warn(
+                _UNVERIFIED_DECODE_WARNING,
+                InsecureDecodeWarning,
+                stacklevel=2,
+            )
             co.setdefault("verify_exp", False)
             co.setdefault("verify_nbf", False)
             co.setdefault("verify_iat", False)
             co.setdefault("verify_aud", False)
             co.setdefault("verify_iss", False)
+            co.setdefault("verify_sub", False)
         if co.get("verify_signature", True) and not algorithms:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
+        if detached_payload is None and co.get("verify_signature", True):
+            header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+            if header_peek.get("b64") is False:
+                raise DecodeError(
+                    'It is required that you pass in a value for the "detached_payload" '
+                    "argument to decode a message having the b64 header set to false."
+                )
         merged = {**self._options, **co}
+        if not co.get("verify_signature", True):
+            if subject is not None and not merged.get("verify_sub", False):
+                warnings.warn(
+                    "The subject argument is ignored when verify_sub is False "
+                    "(the default when verify_signature is False).",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
+            elif subject is not None and merged.get("verify_sub", False):
+                warnings.warn(
+                    "Checking subject with verify_signature=False does not prove "
+                    "the token was issued for that subject; use signature "
+                    "verification in production.",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
+            if merged.get("require"):
+                warnings.warn(
+                    "options['require'] only checks claim presence when "
+                    "verify_signature is False, not authenticity.",
+                    InsecureDecodeWarning,
+                    stacklevel=2,
+                )
         if audience is not None and not isinstance(
             audience, (str, Iterable, type(None))
         ):
             raise TypeError("audience must be a string, iterable or None")
         if audience is not None and isinstance(audience, (bytes, bytearray, memoryview)):
             raise TypeError("audience must be a string, iterable or None")
+        if issuer is not None and not isinstance(
+            issuer, (str, Iterable, type(None))
+        ):
+            raise TypeError("issuer must be a string, iterable or None")
+        if issuer is not None and isinstance(issuer, (bytes, bytearray, memoryview)):
+            raise TypeError("issuer must be a string, iterable or None")
 
-        _s, header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
-        header: dict[str, Any] = (
-            header_obj
-            if isinstance(header_obj, dict)
-            else _claims_to_plain_dict(header_obj)
-        )
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
-            pl_d = _oxyjwt.decode_unverified(token)
-            if not isinstance(pl_d, dict):
-                pl_d = _claims_to_plain_dict(pl_d)
-            self._validate_claims(pl_d, merged, audience, issuer, lwf)
+            header = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+            _s, _header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
+            if detached_payload is not None:
+                pl_d = _as_plain_dict(orjson.loads(bytes(detached_payload)))
+            else:
+                pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
+            self._validate_claims(
+                pl_d, merged, audience, issuer, subject, lwf
+            )
             return {
                 "payload": pl_d,
                 "header": header,
@@ -220,7 +271,15 @@ class PyJWT:
             }
         assert algorithms is not None
         req = [str(x) for x in (merged.get("require") or []) if x is not None]
-        dec = _oxyjwt.decode(
+        whole_leeway = _leeway_is_whole_seconds(lwf)
+        rust_options = merged
+        if not whole_leeway:
+            rust_options = dict(merged)
+            if merged.get("verify_exp", True):
+                rust_options["verify_exp"] = False
+            if merged.get("verify_nbf", True):
+                rust_options["verify_nbf"] = False
+        dec, header_obj, sigb = _oxyjwt.decode_verified_complete(
             token,
             key,
             list(algorithms),
@@ -228,15 +287,23 @@ class PyJWT:
             issuer=issuer,
             subject=subject,
             leeway=lwf,
-            options=merged,
+            options=rust_options,
             require=req,
+            detached_payload=bytes(detached_payload)
+            if detached_payload is not None
+            else None,
         )
-        pl_out: dict[str, Any]
-        if not isinstance(dec, dict):
-            pl_out = _claims_to_plain_dict(dec)
-        else:
-            pl_out = dec
-        self._validate_claims(pl_out, merged, audience, issuer, lwf)
+        header = _as_plain_dict(header_obj)
+        pl_out = _as_plain_dict(dec)
+        self._validate_claims(
+            pl_out,
+            merged,
+            audience,
+            issuer,
+            subject,
+            lwf,
+            rust_time_claims=whole_leeway and detached_payload is None,
+        )
         return {
             "payload": pl_out,
             "header": header,
@@ -248,21 +315,37 @@ class PyJWT:
         payload: dict[str, Any],
         options: dict[str, Any],
         audience: str | Iterable[str] | None = None,
-        issuer: str | None = None,
+        issuer: str | Iterable[str] | None = None,
+        subject: str | None = None,
         leeway: float = 0,
+        *,
+        rust_time_claims: bool = False,
     ) -> None:
+        """Validate claims after decode.
+
+        Verified decode (`rust_time_claims=True`): ``exp`` and ``nbf`` are checked in
+        Rust (jsonwebtoken); this layer handles ``iat`` plus audience/issuer/sub
+        rules that depend on call-time parameters.
+        """
         self._validate_required(payload, options)
         now = time.time()
         if "iat" in payload and options.get("verify_iat", True):
             self._validate_iat_fields(payload, now, leeway)
-        if "nbf" in payload and options.get("verify_nbf", True):
-            self._validate_nbf_fields(payload, now, leeway)
-        if "exp" in payload and options.get("verify_exp", True):
-            self._validate_exp_fields(payload, now, leeway)
+        if not rust_time_claims:
+            if "nbf" in payload and options.get("verify_nbf", True):
+                self._validate_nbf_fields(payload, now, leeway)
+            if "exp" in payload and options.get("verify_exp", True):
+                self._validate_exp_fields(payload, now, leeway)
         if options.get("verify_iss", True):
             self._validate_iss_field(payload, issuer)
         if options.get("verify_aud", True):
-            self._validate_aud_field(payload, audience)
+            self._validate_aud_field(
+                payload,
+                audience,
+                strict=bool(options.get("strict_aud", False)),
+            )
+        if options.get("verify_sub", True):
+            self._validate_sub_field(payload, subject)
 
     @staticmethod
     def _validate_required(
@@ -310,19 +393,34 @@ class PyJWT:
             raise ExpiredSignatureError("Signature has expired")
 
     @staticmethod
+    def _validate_sub_field(
+        payload: dict[str, Any], subject: str | None
+    ) -> None:
+        if "sub" not in payload:
+            return
+        if not isinstance(payload["sub"], str):
+            raise InvalidSubjectError("Subject must be a string")
+        if subject is not None and payload.get("sub") != subject:
+            raise InvalidSubjectError("Invalid subject")
+
+    @staticmethod
     def _validate_iss_field(
-        payload: dict[str, Any], issuer: str | None
+        payload: dict[str, Any], issuer: str | Iterable[str] | None
     ) -> None:
         if issuer is None:
             return
         if "iss" not in payload:
             raise MissingRequiredClaimError("iss")
-        if payload["iss"] != issuer:
+        issuers = [issuer] if isinstance(issuer, str) else list(issuer)
+        if payload["iss"] not in issuers:
             raise InvalidIssuerError("Invalid issuer")
 
     @staticmethod
     def _validate_aud_field(
-        payload: dict[str, Any], audience: str | Iterable[str] | None
+        payload: dict[str, Any],
+        audience: str | Iterable[str] | None,
+        *,
+        strict: bool = False,
     ) -> None:
         if audience is None:
             if "aud" not in payload or not payload["aud"]:
@@ -331,6 +429,16 @@ class PyJWT:
         if "aud" not in payload or not payload["aud"]:
             raise MissingRequiredClaimError("aud")
         audience_claims = payload["aud"]
+        if strict:
+            if not isinstance(audience, str):
+                raise InvalidAudienceError("Invalid audience (strict)")
+            if not isinstance(audience_claims, str):
+                raise InvalidAudienceError(
+                    "Invalid claim format in token (strict)"
+                )
+            if audience != audience_claims:
+                raise InvalidAudienceError("Audience doesn't match (strict)")
+            return
         if isinstance(audience_claims, str):
             audience_claims = [audience_claims]
         if not isinstance(audience_claims, list):

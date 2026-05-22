@@ -33,14 +33,7 @@ pub fn build_validation(
 
     let mut validation = Validation::new(parsed_algorithms[0]);
     validation.algorithms = parsed_algorithms.clone();
-    let leeway_u64 = if leeway <= 0.0 {
-        0u64
-    } else if leeway >= u64::MAX as f64 {
-        u64::MAX
-    } else {
-        leeway as u64
-    };
-    validation.leeway = leeway_u64;
+    validation.leeway = leeway_as_u64(leeway);
     validation.validate_exp = option_bool(options, "verify_exp", true)?;
     validation.validate_nbf = option_bool(options, "verify_nbf", true)?;
 
@@ -86,12 +79,26 @@ pub fn build_validation(
         }
     }
 
-    validation.sub = subject;
+    let verify_sub = option_bool(options, "verify_sub", true)?;
+    if verify_sub {
+        validation.sub = subject;
+    }
 
     Ok(DecodeValidation {
         algorithms: parsed_algorithms,
         validation,
     })
+}
+
+/// Map Python `leeway` (float seconds) to jsonwebtoken's whole-second `leeway`.
+pub fn leeway_as_u64(leeway: f64) -> u64 {
+    if leeway <= 0.0 {
+        0
+    } else if leeway >= u64::MAX as f64 {
+        u64::MAX
+    } else {
+        leeway.round() as u64
+    }
 }
 
 fn option_bool(options: Option<&Bound<'_, PyAny>>, key: &str, default: bool) -> PyResult<bool> {
@@ -157,5 +164,13 @@ mod tests {
         assert!(
             build_validation(vec!["none".to_owned()], None, None, None, 0.0, None, None).is_err()
         );
+    }
+
+    #[test]
+    fn leeway_rounds_to_nearest_second() {
+        assert_eq!(leeway_as_u64(0.0), 0);
+        assert_eq!(leeway_as_u64(0.4), 0);
+        assert_eq!(leeway_as_u64(0.9), 1);
+        assert_eq!(leeway_as_u64(1.5), 2);
     }
 }
