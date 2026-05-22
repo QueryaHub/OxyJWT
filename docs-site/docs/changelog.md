@@ -14,6 +14,7 @@
 
 ### Security
 
+- HMAC secret buffers copied from Python are held in `Zeroizing<Vec<u8>>` and cleared after `EncodingKey` / `DecodingKey` construction and ephemeral `from_secret` decode paths.
 - Compact JWT strings larger than 256 KiB are rejected with `DecodeError` before base64/JSON parsing (all decode and unverified entry points).
 - `InsecureDecodeWarning` when `verify_signature` is `False`; additional warnings when `subject` or `require` are used without signature verification.
 - `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.

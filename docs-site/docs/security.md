@@ -87,6 +87,10 @@ Do not print tokens, private keys, or HMAC secrets in logs.
 
 Prefer verified `decode` with an explicit `algorithms` allow-list in production.
 
+## HMAC key material
+
+When you pass a raw `str` / `bytes` HMAC secret (or use `EncodingKey.from_secret` / `DecodingKey.from_secret`), the Rust core copies the material into a buffer that is **zeroized on drop** after the `jsonwebtoken` key object is built. Long-lived `EncodingKey` / `DecodingKey` instances still hold signing material inside the library as required for operation; prefer short-lived keys and OS secret stores in production.
+
 ## Compact JWT size limit
 
 OxyJWT rejects compact JWT strings larger than **256 KiB** (same order of magnitude as the default JWKS `max_bytes` cap) with `DecodeError` before base64 or JSON parsing. This applies to verified `decode`, `decode_unverified`, `get_unverified_header`, and `jws_parse_compact`. Legitimate tokens are far smaller; huge inputs are usually denial-of-service attempts.
