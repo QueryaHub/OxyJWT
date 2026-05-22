@@ -129,6 +129,8 @@ python -m venv .venv
 
 The script covers HMAC, RSA, RSA-PSS, ECDSA, and EdDSA algorithms. Unsupported library/algorithm combinations are reported as `0` throughput. For a quicker smoke test, pass something like `--algorithms HS256,RS256,EdDSA --iterations 100 --rounds 1`.
 
+**Benchmark fairness:** the default `--competitor-key-mode pem` keeps pre-parsed `EncodingKey`/`DecodingKey` for OxyJWT while competitors often receive PEM bytes (see [Benchmarks](docs-site/docs/benchmarks.md)). For asymmetric comparisons, also run with `--competitor-key-mode cached`.
+
 Benchmark outputs are ignored by git because results depend on the machine, Python version, compiler flags, and CPU state.
 
 The default Rust crypto backend is `aws_lc_rs`, chosen for stronger performance on RSA and ECDSA in local benchmarks. You can still build with `rust_crypto` for comparison:
@@ -152,20 +154,19 @@ OxyJWT implements JWT/JWS signing and verification. JWE encryption is not part o
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request expectations. Report security issues privately via [SECURITY.md](SECURITY.md).
 
-## 🚀 Performance Benchmarks
+## Performance benchmarks
 
-OxyJWT is built for absolute speed. By bypassing the Python GIL and leveraging Rust's cryptographic primitives, it completely destroys standard Python libraries in both symmetric and asymmetric cryptography.
+OxyJWT is optimized for throughput on typical JWT workloads (especially HMAC). See [docs-site/docs/benchmarks.md](docs-site/docs/benchmarks.md) for smoke vs extended vs full workflows and key-preparation modes.
 
-Below is a performance comparison measured in **Operations per second (ops/sec)** (higher is better):
+The table below is a **historical snapshot** (default script settings, `pem` competitor keys). RS256 encode numbers are not comparable to `--competitor-key-mode cached`; re-run the script on your hardware before drawing conclusions.
 
-| Algorithm | Operation | ⚡ OxyJWT | PyJWT | Authlib | python-jose |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **HS256** | Encode | **620,270** | 140,670 | 99,408 | 99,507 |
-| **HS256** | Decode | **361,073** | 109,272 | 94,823 | 51,838 |
-| **RS256** | Encode | **1,934** | 35 | 35 | 35 |
-| **RS256** | Decode | **58,752** | 27,200 | 26,085 | 23,046 |
-| **EdDSA** | Encode | **69,105** | 17,518 | 15,014 | N/A |
-| **EdDSA** | Decode | **31,666** | 10,741 | 10,317 | N/A |
-| **ES256** | Encode | **46,559** | 19,632 | 16,199 | 19,723 |
+| Algorithm | Operation | OxyJWT | PyJWT | Authlib | python-jose |
+| :--- | :--- | ---: | ---: | ---: | ---: |
 
-*Tested against standard Python ecosystem libraries. OxyJWT consistently dominates across all algorithms.*
+| **HS256** | Encode | 620,270 | 140,670 | 99,408 | 99,507 |
+| **HS256** | Decode | 361,073 | 109,272 | 94,823 | 51,838 |
+| **RS256** | Encode | 1,934 | 35 | 35 | 35 |
+| **RS256** | Decode | 58,752 | 27,200 | 26,085 | 23,046 |
+| **EdDSA** | Encode | 69,105 | 17,518 | 15,014 | N/A |
+| **EdDSA** | Decode | 31,666 | 10,741 | 10,317 | N/A |
+| **ES256** | Encode | 46,559 | 19,632 | 16,199 | 19,723 |
