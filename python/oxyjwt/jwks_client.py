@@ -54,6 +54,7 @@ class PyJWKClient:
         uri: str,
         *,
         cache_jwk_set: bool = True,
+        cache_keys: bool = False,
         max_cached_keys: int = 16,
         timeout: float = 30.0,
         max_bytes: int = _DEFAULT_MAX_JWKS_BYTES,
@@ -76,6 +77,7 @@ class PyJWKClient:
                 f'lifespan must be greater than 0, the input is "{lifespan}"'
             )
         self._lifespan = float(lifespan)
+        self._cache_keys = bool(cache_keys)
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
         if max_bytes < 1:
@@ -131,19 +133,21 @@ class PyJWKClient:
     def get_signing_key(self, kid: str) -> PyJWK:
         if not kid:
             raise PyJWKClientError("kid must be a non-empty string")
-        cached = self._kid_lru.get(kid)
-        if cached is not None:
-            self._kid_lru.move_to_end(kid)
-            return cached
+        if self._cache_keys:
+            cached = self._kid_lru.get(kid)
+            if cached is not None:
+                self._kid_lru.move_to_end(kid)
+                return cached
         jwks = self.get_jwk_set()
         try:
             jwk = jwks[kid]
         except KeyError:
             jwks = self.get_jwk_set(refresh=True)
             jwk = jwks[kid]
-        self._kid_lru[kid] = jwk
-        while len(self._kid_lru) > self._max_cached_keys:
-            self._kid_lru.popitem(last=False)
+        if self._cache_keys:
+            self._kid_lru[kid] = jwk
+            while len(self._kid_lru) > self._max_cached_keys:
+                self._kid_lru.popitem(last=False)
         return jwk
 
     def get_signing_key_from_jwt(
