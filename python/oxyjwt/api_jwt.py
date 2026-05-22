@@ -1,6 +1,7 @@
 """PyJWT-compatible JWT API (encode / decode / decode_complete)."""
 from __future__ import annotations
 
+import math
 import time
 import warnings
 from calendar import timegm
@@ -54,6 +55,12 @@ def _leeway_seconds(leeway: float | timedelta) -> float:
     if isinstance(leeway, timedelta):
         return leeway.total_seconds()
     return float(leeway)
+
+
+def _leeway_is_whole_seconds(leeway: float) -> bool:
+    """True when leeway is an integer number of seconds (Rust jsonwebtoken path)."""
+    rounded = round(leeway)
+    return math.isclose(leeway, rounded, rel_tol=0.0, abs_tol=1e-9)
 
 
 def _as_plain_dict(obj: Any) -> dict[str, Any]:
@@ -257,6 +264,14 @@ class PyJWT:
             }
         assert algorithms is not None
         req = [str(x) for x in (merged.get("require") or []) if x is not None]
+        whole_leeway = _leeway_is_whole_seconds(lwf)
+        rust_options = merged
+        if not whole_leeway:
+            rust_options = dict(merged)
+            if merged.get("verify_exp", True):
+                rust_options["verify_exp"] = False
+            if merged.get("verify_nbf", True):
+                rust_options["verify_nbf"] = False
         dec, header_obj, sigb = _oxyjwt.decode_verified_complete(
             token,
             key,
@@ -265,7 +280,7 @@ class PyJWT:
             issuer=issuer,
             subject=subject,
             leeway=lwf,
-            options=merged,
+            options=rust_options,
             require=req,
         )
         header = _as_plain_dict(header_obj)
@@ -277,7 +292,7 @@ class PyJWT:
             issuer,
             subject,
             lwf,
-            rust_time_claims=True,
+            rust_time_claims=whole_leeway,
         )
         return {
             "payload": pl_out,
