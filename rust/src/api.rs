@@ -153,6 +153,12 @@ fn decode_rfc7797_verified_complete(
     decode_validation: &validation::DecodeValidation,
     decoding_key: &jsonwebtoken::DecodingKey,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
+    if detached_payload.len() > jws::MAX_COMPACT_JWT_BYTES {
+        return Err(errors::decode_error(format!(
+            "Detached payload exceeds maximum size ({} bytes)",
+            jws::MAX_COMPACT_JWT_BYTES
+        )));
+    }
     let token = token.to_owned();
     let payload = detached_payload.to_vec();
     let allowed_algorithms = decode_validation.algorithms.clone();

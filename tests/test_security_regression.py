@@ -209,6 +209,22 @@ def test_security_oversized_compact_jwt_rejected_before_parse() -> None:
         oxyjwt.get_unverified_header(token)
 
 
+def test_security_oversized_detached_payload_rejected() -> None:
+    """RFC 7797 external payload must respect the same size cap as compact JWT (issue #59)."""
+    header = _b64u(
+        json.dumps({"alg": "HS256", "b64": False, "crit": ["b64"]}).encode()
+    )
+    token = f"{header}..{_b64u(b'sig')}"
+    huge = b"x" * (_MAX_COMPACT_JWT_BYTES + 1)
+    with pytest.raises(DecodeError, match="Detached payload exceeds maximum size"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            detached_payload=huge,
+        )
+
+
 # --- Algorithm confusion before JWKS fetch (issue #8) ---
 
 

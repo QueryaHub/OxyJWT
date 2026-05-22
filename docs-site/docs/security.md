@@ -93,7 +93,7 @@ When you pass a raw `str` / `bytes` HMAC secret (or use `EncodingKey.from_secret
 
 ## Compact JWT size limit
 
-OxyJWT rejects compact JWT strings larger than **256 KiB** (same order of magnitude as the default JWKS `max_bytes` cap) with `DecodeError` before base64 or JSON parsing. This applies to verified `decode`, `decode_unverified`, `get_unverified_header`, and `jws_parse_compact`. Legitimate tokens are far smaller; huge inputs are usually denial-of-service attempts.
+OxyJWT rejects compact JWT strings larger than **256 KiB** (same order of magnitude as the default JWKS `max_bytes` cap) with `DecodeError` before base64 or JSON parsing. This applies to verified `decode`, `decode_unverified`, `get_unverified_header`, and `jws_parse_compact`. RFC 7797 **`detached_payload`** bytes passed to verified decode are capped at the same limit before copy or JSON parsing. Legitimate tokens are far smaller; huge inputs are usually denial-of-service attempts.
 
 ## Treat Unverified Helpers As Inspection Only
 
