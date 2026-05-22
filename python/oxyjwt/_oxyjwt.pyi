@@ -54,7 +54,7 @@ def encode(
 
 
 def encode_json(
-    payload_json: str,
+    payload_json: str | bytes,
     key: str | bytes | EncodingKey,
     algorithm: str = "HS256",
     headers: Mapping[str, Any] | None = None,
