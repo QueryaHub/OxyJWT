@@ -23,8 +23,12 @@ nav:
       - Keys and algorithms: usage/keys.md
       - Handling errors: usage/errors.md
       - "Migration from PyJWT": usage/migration-pyjwt.md
+  - Cookbooks:
+      - "FastAPI JWT": cookbooks/fastapi-jwt.md
   - Security: security.md
+  - Benchmarks: benchmarks.md
   - API Reference: api-reference.md
+  - Versioning: versioning.md
   - Development: development.md
   - Changelog: changelog.md
 
