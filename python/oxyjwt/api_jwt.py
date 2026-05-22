@@ -73,6 +73,26 @@ def _as_plain_dict(obj: Any) -> dict[str, Any]:
     raise TypeError("expected JSON object for JWT claims or header")
 
 
+def _require_detached_payload_for_rfc7797(
+    token: str,
+    *,
+    detached_payload: bytes | None,
+    verify_signature: bool,
+) -> None:
+    """Raise when verified decode needs RFC 7797 detached_payload (b64: false)."""
+    if detached_payload is not None or not verify_signature:
+        return
+    segments = token.split(".", 2)
+    if len(segments) < 3 or segments[1] != "":
+        return
+    header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+    if header_peek.get("b64") is False:
+        raise DecodeError(
+            'It is required that you pass in a value for the "detached_payload" '
+            "argument to decode a message having the b64 header set to false."
+        )
+
+
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
     enc = encoder_cls()
 
@@ -209,13 +229,11 @@ class PyJWT:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
-        if detached_payload is None and co.get("verify_signature", True):
-            header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
-            if header_peek.get("b64") is False:
-                raise DecodeError(
-                    'It is required that you pass in a value for the "detached_payload" '
-                    "argument to decode a message having the b64 header set to false."
-                )
+        _require_detached_payload_for_rfc7797(
+            token,
+            detached_payload=detached_payload,
+            verify_signature=bool(co.get("verify_signature", True)),
+        )
         merged = {**self._options, **co}
         if not co.get("verify_signature", True):
             if subject is not None and not merged.get("verify_sub", False):
