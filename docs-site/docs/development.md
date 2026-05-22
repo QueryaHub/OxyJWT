@@ -33,7 +33,7 @@ OxyJWT ships inline stubs (`python/oxyjwt/*.pyi`) and a `py.typed` marker. After
 .venv/bin/python -m mypy python/oxyjwt tests/typing/test_public_api.py
 ```
 
-CI runs the same check in a dedicated **Type check (mypy)** job. `tests/typing/test_mypy.py` wraps this for local pytest runs.
+CI runs the same check in a dedicated **Type check (mypy)** job. With `mypy` installed (`pip install -e ".[dev]"`), `tests/typing/test_mypy.py` runs the same command under pytest; without it, that test is skipped.
 
 ## Run Tests
 

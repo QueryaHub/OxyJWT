@@ -219,7 +219,9 @@ def test_require_claim_parity() -> None:
 def test_fractional_leeway_exp_boundary_parity() -> None:
     secret = "hmac-secret-32-bytes-long-ok!!!"
     now = int(time.time())
-    payload = {"sub": "u", "exp": now}
+    # exp must be strictly after int(now): PyJWT compares exp to float time.time(),
+    # so exp==now fails for most of each second (parity flake on CI).
+    payload = {"sub": "u", "exp": now + 1}
     token = jwt.encode(payload, secret, algorithm="HS256")
     assert jwt.decode(
         token,
