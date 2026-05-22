@@ -1,0 +1,49 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt authlib python-jose
+
+      - name: Build and install OxyJWT
+        run: .venv/bin/maturin develop --release
+
+      - name: Run comparison script
+        run: |
+          mkdir -p benchmark-results
+          .venv/bin/python scripts/compare_jwt_libraries.py \
+            --algorithms HS256,RS256,EdDSA \
+            --iterations 200 \
+            --rounds 2 \
+            --warmup 50 \
+            --markdown benchmark-results/ci-bench.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-md
+          path: benchmark-results/ci-bench.md
