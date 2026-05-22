@@ -36,6 +36,23 @@ pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
     Ok((signing_input, header, payload_bytes, signature_bytes))
 }
 
+/// Extract and decode the JWS signature segment without parsing header or payload JSON.
+pub fn extract_signature_bytes(token: &str) -> Result<Vec<u8>, String> {
+    let mut parts = token.rsplitn(2, '.');
+    let sig_encoded = parts
+        .next()
+        .ok_or_else(|| "Not enough segments".to_string())?;
+    if parts.next().is_none() {
+        return Err("Not enough segments".to_string());
+    }
+    if parts.next().is_some() {
+        return Err("Too many segments".to_string());
+    }
+    URL_SAFE_NO_PAD
+        .decode(sig_encoded)
+        .map_err(|e| e.to_string())
+}
+
 type JwsParseOutput = (Py<PyBytes>, Py<PyAny>, Py<PyBytes>, Py<PyBytes>);
 
 #[pyfunction]
@@ -48,4 +65,18 @@ pub fn jws_parse_compact(py: Python<'_>, token: &str) -> PyResult<JwsParseOutput
     let pld = PyBytes::new(py, &payload);
     let sigb = PyBytes::new(py, &signature);
     Ok((signing.into(), header_obj, pld.into(), sigb.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_signature_matches_full_parse() {
+        let token =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let (_, _, _, full_sig) = parse_compact_jws(token).expect("parse");
+        let extracted = extract_signature_bytes(token).expect("extract");
+        assert_eq!(full_sig, extracted);
+    }
 }

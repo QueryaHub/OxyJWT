@@ -1,10 +1,12 @@
 use jsonwebtoken::{dangerous, decode as jwt_decode, decode_header, encode as jwt_encode, Header};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use serde_json::Value;
 
 use crate::algorithms::{algorithm_name, parse_algorithm};
 use crate::claims::{json_to_py, py_to_json_for_encode};
 use crate::errors;
+use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation;
 
@@ -67,6 +69,55 @@ pub fn decode(
         .map_err(errors::from_jwt_decode_error)?;
 
     json_to_py(py, &token_data.claims)
+}
+
+type DecodeVerifiedCompleteOutput = (Py<PyAny>, Py<PyAny>, Py<PyBytes>);
+
+/// Verified decode for `decode_complete`: one full JWT parse via jsonwebtoken, plus a cheap
+/// signature segment extraction (no duplicate header/payload JSON parse).
+#[pyfunction]
+#[pyo3(signature = (
+    token,
+    key,
+    algorithms,
+    *,
+    audience = None,
+    issuer = None,
+    subject = None,
+    leeway = 0.0,
+    options = None,
+    require = None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn decode_verified_complete(
+    py: Python<'_>,
+    token: &str,
+    key: &Bound<'_, PyAny>,
+    algorithms: Vec<String>,
+    audience: Option<&Bound<'_, PyAny>>,
+    issuer: Option<&Bound<'_, PyAny>>,
+    subject: Option<String>,
+    leeway: f64,
+    options: Option<&Bound<'_, PyAny>>,
+    require: Option<Vec<String>>,
+) -> PyResult<DecodeVerifiedCompleteOutput> {
+    let decode_validation = validation::build_validation(
+        algorithms, audience, issuer, subject, leeway, options, require,
+    )?;
+    let decoding_key = decoding_key_from_py(key, &decode_validation.algorithms)?;
+
+    let token_data = py
+        .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
+        .map_err(errors::from_jwt_decode_error)?;
+
+    let header_value = serde_json::to_value(&token_data.header).map_err(|err| {
+        errors::decode_error(format!("failed to serialize decoded header: {err}"))
+    })?;
+    let header_py = json_to_py(py, &header_value)?;
+    let claims_py = json_to_py(py, &token_data.claims)?;
+    let signature = jws::extract_signature_bytes(token).map_err(errors::decode_error)?;
+    let sig_py = PyBytes::new(py, &signature);
+    Ok((claims_py, header_py, sig_py.into()))
 }
 
 #[pyfunction]
