@@ -17,6 +17,7 @@
 - `PyJWKSet` emits `PyJWKSetSkipWarning` when unusable JWK entries are skipped (index and `kid` in message).
 - Claim validation split documented: Rust validates `exp`/`nbf` on verified decode; Python validates `iat` and PyJWT-style audience/issuer/sub rules. `verify_sub=False` no longer validates `sub` in Rust when `subject` is passed.
 - Fractional `leeway` on verified decode: Python validates `exp`/`nbf` with float semantics; Rust uses rounded whole seconds when `leeway` is an integer.
+- `PyJWKSet` O(1) lookup by `kid`; `PyJWK.key` parses `DecodingKey` lazily on first access.
 
 ### Performance
 

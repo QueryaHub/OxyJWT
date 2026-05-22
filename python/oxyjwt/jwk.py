@@ -38,12 +38,18 @@ class PyJWK:
         _reject_encryption_jwk(data)
         # algorithm hint only for error messages; verification uses the JWK as-is
         self._jwk = data
+        self._key: _oxyjwt.DecodingKey | None = None
         _ = algorithm
-        try:
-            self.key: _oxyjwt.DecodingKey = _oxyjwt.DecodingKey.from_jwk(self._jwk)
-        except Exception as e:  # noqa: BLE001
-            msg = str(e) or type(e).__name__
-            raise PyJWKError(f"Unable to build key from JWK: {msg}") from e
+
+    @property
+    def key(self) -> _oxyjwt.DecodingKey:
+        if self._key is None:
+            try:
+                self._key = _oxyjwt.DecodingKey.from_jwk(self._jwk)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e) or type(e).__name__
+                raise PyJWKError(f"Unable to build key from JWK: {msg}") from e
+        return self._key
 
     @staticmethod
     def from_dict(obj: Mapping[str, Any], algorithm: str | None = None) -> PyJWK:
@@ -73,9 +79,10 @@ class PyJWKSet:
         if not isinstance(keys, list):
             raise PyJWKSetError("Invalid JWK Set value")
         self.keys: list[PyJWK] = []
+        self._by_kid: dict[str, PyJWK] = {}
         for index, k in enumerate(keys):
             try:
-                self.keys.append(PyJWK(k))
+                jwk = PyJWK(k)
             except OxyJWTError as error:
                 kid = k.get("kid") if isinstance(k, dict) else None
                 kid_label = f"kid={kid!r}" if kid is not None else "no kid"
@@ -85,6 +92,10 @@ class PyJWKSet:
                     stacklevel=2,
                 )
                 continue
+            self.keys.append(jwk)
+            kid = jwk.key_id
+            if kid is not None and kid not in self._by_kid:
+                self._by_kid[kid] = jwk
         if not self.keys:
             raise PyJWKSetError(
                 "The JWK Set did not contain any usable keys."
@@ -102,10 +113,10 @@ class PyJWKSet:
         return PyJWKSet.from_dict(orjson.loads(data.encode("utf-8")))
 
     def __getitem__(self, kid: str) -> PyJWK:
-        for j in self.keys:
-            if j.key_id == kid:
-                return j
-        raise KeyError(f"keyset has no key for kid: {kid!r}")
+        try:
+            return self._by_kid[kid]
+        except KeyError as e:
+            raise KeyError(f"keyset has no key for kid: {kid!r}") from e
 
 
 __all__ = ["PyJWK", "PyJWKSet"]

@@ -98,6 +98,79 @@ def test_pyjwkset_only_encryption_keys_raises() -> None:
             PyJWKSet.from_dict({"keys": [enc_jwk]})
 
 
+def test_pyjwkset_getitem_uses_kid_index() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    s = PyJWKSet.from_dict(
+        {
+            "keys": [
+                {"kty": "oct", "k": k, "kid": "a"},
+                {"kty": "oct", "k": k, "kid": "b"},
+            ]
+        }
+    )
+    assert s["b"] is s._by_kid["b"]  # noqa: SLF001
+
+
+def test_pyjwk_lazy_decoding_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import oxyjwt
+
+    calls: list[int] = []
+    orig = oxyjwt._oxyjwt.DecodingKey.from_jwk
+
+    def counting(jwk: object) -> object:
+        calls.append(1)
+        return orig(jwk)
+
+    monkeypatch.setattr(oxyjwt._oxyjwt.DecodingKey, "from_jwk", counting)
+    secret = b"my-secret-32-bytes-long-ok!!!!"
+    kb = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    jwk = PyJWK({"kty": "oct", "k": kb, "kid": "k1"})
+    assert calls == []
+    _ = jwk.key
+    assert len(calls) == 1
+    _ = jwk.key
+    assert len(calls) == 1
+
+
+def test_pyjwkset_only_parses_used_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import oxyjwt
+
+    calls: list[str] = []
+    orig = oxyjwt._oxyjwt.DecodingKey.from_jwk
+
+    def counting(jwk: dict[str, object]) -> object:
+        kid = jwk.get("kid")
+        calls.append(str(kid))
+        return orig(jwk)
+
+    monkeypatch.setattr(oxyjwt._oxyjwt.DecodingKey, "from_jwk", counting)
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    s = PyJWKSet.from_dict(
+        {
+            "keys": [
+                {"kty": "oct", "k": k, "kid": "unused"},
+                {"kty": "oct", "k": k, "kid": "used"},
+            ]
+        }
+    )
+    assert calls == []
+    tok = oxyjwt.encode(
+        {"x": 1, "exp": 9_999_999_999},
+        secret,
+        algorithm="HS256",
+        headers={"kid": "used"},
+    )
+    oxyjwt.decode(
+        tok,
+        s["used"].key,
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert calls == ["used"]
+
+
 def test_pyjwkset_valid_keys_load_without_warning() -> None:
     jw = json.loads(_oct_jwk_for_secret(b"no-warn-secret-32-bytes-ok!"))
     with warnings.catch_warnings():
