@@ -4,15 +4,16 @@ from __future__ import annotations
 import ssl
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from typing import Any
 
 import orjson
 
 from oxyjwt import _oxyjwt
-from oxyjwt.jwk import PyJWKSet
+from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 
-_DEFAULT_UA = "OxyJWT-PyJWKClient/0.2 (+https://github.com/QueryaHub/OxyJWT)"
+_DEFAULT_UA = "OxyJWT-PyJWKClient/0.3 (+https://github.com/QueryaHub/OxyJWT)"
 
 
 def _header_to_plain_dict(obj: Any) -> dict[str, Any]:
@@ -39,7 +40,7 @@ class PyJWKClient:
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
         self._jwk_set: PyJWKSet | None = None
-        # Simple LRU not implemented: cache is replace-on-fetch when enabled.
+        self._kid_lru: OrderedDict[str, PyJWK] = OrderedDict()
 
     def _fetch_raw(self) -> bytes:
         req = urllib.request.Request(
@@ -65,6 +66,7 @@ class PyJWKClient:
         if not isinstance(obj, dict) or "keys" not in obj:
             raise PyJWKClientError("JWKS response must be a JSON object with a 'keys' field")
         jwks = PyJWKSet.from_dict(obj)
+        self._kid_lru.clear()
         if self._cache_jwk_set:
             self._jwk_set = jwks
         return jwks
@@ -72,8 +74,16 @@ class PyJWKClient:
     def get_signing_key(self, kid: str) -> PyJWK:
         if not kid:
             raise PyJWKClientError("kid must be a non-empty string")
+        cached = self._kid_lru.get(kid)
+        if cached is not None:
+            self._kid_lru.move_to_end(kid)
+            return cached
         jwks = self.get_jwk_set()
-        return jwks[kid]
+        jwk = jwks[kid]
+        self._kid_lru[kid] = jwk
+        while len(self._kid_lru) > self._max_cached_keys:
+            self._kid_lru.popitem(last=False)
+        return jwk
 
     def get_signing_key_from_jwt(self, jwt: str | bytes) -> PyJWK:
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
