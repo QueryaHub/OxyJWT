@@ -11,6 +11,7 @@
 
 - `InsecureDecodeWarning` when `verify_signature` is `False`; additional warnings when `subject` or `require` are used without signature verification.
 - `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.
+- `PyJWKClient` `max_bytes` (default 256 KiB) and optional `require_https` for JWKS fetches.
 
 ### Performance
 
