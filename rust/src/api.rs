@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::algorithms::{algorithm_name, parse_algorithm, parse_algorithm_name};
 use crate::claims::{json_to_py, py_to_json_for_encode};
+use crate::claims_validate;
 use crate::errors;
 use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
@@ -170,6 +171,7 @@ fn decode_rfc7797_verified_complete(
     let payload = detached_payload.to_vec();
     let allowed_algorithms = decode_validation.algorithms.clone();
     let decoding_key = decoding_key.clone();
+    let validation = decode_validation.validation.clone();
     let (parts, claims, signature) = py
         .detach(move || {
             let parts = jws::parse_rfc7797_compact(&token)?;
@@ -198,6 +200,8 @@ fn decode_rfc7797_verified_complete(
             if !verified {
                 return Err("Signature verification failed".to_string());
             }
+            claims_validate::validate_claims_value(&claims, &validation)
+                .map_err(|err| err.to_string())?;
             let signature = URL_SAFE_NO_PAD
                 .decode(&parts.signature_segment)
                 .map_err(|e| e.to_string())?;
@@ -212,6 +216,24 @@ fn decode_rfc7797_verified_complete(
 }
 
 fn map_rfc7797_decode_error(message: String) -> PyErr {
+    if message.contains("Expired") || message.contains("expired") {
+        return errors::ExpiredSignatureError::new_err(message);
+    }
+    if message.contains("Immature") || message.contains("not yet valid") {
+        return errors::ImmatureSignatureError::new_err(message);
+    }
+    if message.contains("Invalid audience") || message.contains("Audience") {
+        return errors::InvalidAudienceError::new_err(message);
+    }
+    if message.contains("Invalid issuer") || message.contains("issuer") {
+        return errors::InvalidIssuerError::new_err(message);
+    }
+    if message.contains("Invalid subject") || message.contains("Subject") {
+        return errors::InvalidSubjectError::new_err(message);
+    }
+    if message.contains("Missing") && message.contains("claim") {
+        return errors::MissingRequiredClaimError::new_err(message);
+    }
     if message.contains("Signature verification failed") {
         return errors::InvalidSignatureError::new_err(message);
     }

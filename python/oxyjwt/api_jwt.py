@@ -322,7 +322,7 @@ class PyJWT:
             issuer,
             subject,
             lwf,
-            rust_time_claims=whole_leeway and detached_payload is None,
+            rust_time_claims=whole_leeway,
             rust_standard_claims=whole_leeway and detached_payload is None,
         )
         return {
