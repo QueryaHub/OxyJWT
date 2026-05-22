@@ -162,6 +162,7 @@ class PyJWKClient:
         require_https: bool = False,
         headers: Mapping[str, Any] | None = None,
         ssl_context: ssl.SSLContext | None = None,
+        lifespan: float = 300.0,
     ) -> None: ...
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
@@ -181,6 +182,7 @@ When `algorithms` is provided, the token header `alg` is checked against that al
 - `require_https` — when `True`, only `https://` URIs are allowed (default `False`).
 - `headers` — extra HTTP headers merged with defaults (`User-Agent`, `Accept: application/json`). Values are coerced to strings.
 - `ssl_context` — optional `ssl.SSLContext` for HTTPS requests (default: `ssl.create_default_context()`).
+- `lifespan` — TTL in seconds for the cached JWK Set when `cache_jwk_set=True` (default `300`). Must be &gt; 0. Expired entries are refetched on the next `get_jwk_set()`; `get_signing_key` still refetches once on unknown `kid` via `refresh=True`.
 
 ## Exceptions
 

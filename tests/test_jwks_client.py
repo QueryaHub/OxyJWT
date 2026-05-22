@@ -479,3 +479,86 @@ def test_jwks_client_uses_provided_ssl_context(
 def test_jwks_client_rejects_invalid_ssl_context_type() -> None:
     with pytest.raises(TypeError, match="ssl.SSLContext"):
         PyJWKClient("https://example.invalid/jwks", ssl_context=object())  # type: ignore[arg-type]
+
+
+def test_jwks_client_rejects_non_positive_lifespan_when_caching() -> None:
+    with pytest.raises(PyJWKClientError, match="lifespan must be greater than 0"):
+        PyJWKClient("https://example.invalid/jwks", cache_jwk_set=True, lifespan=0)
+
+
+def test_jwks_client_lifespan_refetches_after_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import oxyjwt.jwks_client as jwks_client_mod
+
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    clock = [0.0]
+
+    monkeypatch.setattr(
+        jwks_client_mod.time,
+        "monotonic",
+        lambda: clock[0],
+    )
+    c = PyJWKClient(uri, cache_jwk_set=True, lifespan=300.0, timeout=5.0)
+    c.get_jwk_set()
+    assert _JWKHandler.request_count == 1
+
+    clock[0] = 301.0
+    c.get_jwk_set()
+    assert _JWKHandler.request_count == 2
+
+
+def test_jwks_client_expired_lifespan_refetches_rotated_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import oxyjwt.jwks_client as jwks_client_mod
+
+    secret_old = b"secret-old-32-bytes-long-ok!!!"
+    secret_new = b"secret-new-32-bytes-long-ok!!!"
+    jw_old = {"kty": "oct", "k": _b64u(secret_old), "kid": "old-key"}
+    jw_new = {"kty": "oct", "k": _b64u(secret_new), "kid": "new-key"}
+    uri = _serve_rotating_jwks({"keys": [jw_old]}, {"keys": [jw_new]})
+    clock = [0.0]
+    monkeypatch.setattr(
+        jwks_client_mod.time,
+        "monotonic",
+        lambda: clock[0],
+    )
+    c = PyJWKClient(uri, cache_jwk_set=True, lifespan=60.0, timeout=5.0)
+    c.get_signing_key("old-key")
+    assert _RotatingJWKHandler.request_count == 1
+
+    clock[0] = 120.0
+    jwk = c.get_signing_key("new-key")
+    assert jwk.key_id == "new-key"
+    assert _RotatingJWKHandler.request_count == 2
+
+
+def test_jwks_client_refresh_on_miss_within_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import oxyjwt.jwks_client as jwks_client_mod
+
+    secret_old = b"secret-old-32-bytes-long-ok!!!"
+    secret_new = b"secret-new-32-bytes-long-ok!!!"
+    jw_old = {"kty": "oct", "k": _b64u(secret_old), "kid": "old-key"}
+    jw_new = {"kty": "oct", "k": _b64u(secret_new), "kid": "new-key"}
+    uri = _serve_rotating_jwks({"keys": [jw_old]}, {"keys": [jw_new]})
+    clock = [0.0]
+    monkeypatch.setattr(
+        jwks_client_mod.time,
+        "monotonic",
+        lambda: clock[0],
+    )
+    c = PyJWKClient(uri, cache_jwk_set=True, lifespan=300.0, timeout=5.0)
+    c.get_signing_key("old-key")
+    assert _RotatingJWKHandler.request_count == 1
+
+    jwk = c.get_signing_key("new-key")
+    assert jwk.key_id == "new-key"
+    assert _RotatingJWKHandler.request_count == 2
