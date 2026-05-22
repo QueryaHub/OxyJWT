@@ -168,7 +168,7 @@ impl DecodingKeyMaterial {
         Self { family, key }
     }
 
-    fn decoding_key(&self, algorithms: &[Algorithm]) -> PyResult<JwtDecodingKey> {
+    fn validate_for_algorithms(&self, algorithms: &[Algorithm]) -> PyResult<()> {
         if self.family != KeyFamily::Jwk {
             let expected_family = ensure_single_family(algorithms)?;
             if expected_family != self.family {
@@ -178,7 +178,11 @@ impl DecodingKeyMaterial {
                 )));
             }
         }
+        Ok(())
+    }
 
+    fn decoding_key(&self, algorithms: &[Algorithm]) -> PyResult<JwtDecodingKey> {
+        self.validate_for_algorithms(algorithms)?;
         Ok(self.key.clone())
     }
 }
@@ -209,6 +213,13 @@ pub fn decoding_key_from_py(
         return key_ref.material.decoding_key(algorithms);
     }
 
+    raw_decoding_key_from_py(key, algorithms)
+}
+
+fn raw_decoding_key_from_py(
+    key: &Bound<'_, PyAny>,
+    algorithms: &[Algorithm],
+) -> PyResult<JwtDecodingKey> {
     let family = ensure_single_family(algorithms)?;
     if family != KeyFamily::Hmac {
         return Err(errors::invalid_key(

@@ -132,19 +132,23 @@ pub fn decode_verified_complete(
         );
     }
 
-    let token_data = py
-        .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
-        .map_err(errors::from_jwt_decode_error)?;
+    let token_owned = token.to_owned();
+    let validation = decode_validation.validation;
+    let (token_data, signature) = py.detach(
+        move || -> PyResult<(jsonwebtoken::TokenData<Value>, Vec<u8>)> {
+            let token_data = jwt_decode::<Value>(&token_owned, &decoding_key, &validation)
+                .map_err(errors::from_jwt_decode_error)?;
+            let signature =
+                jws::extract_signature_bytes(&token_owned).map_err(errors::decode_error)?;
+            Ok((token_data, signature))
+        },
+    )?;
 
     let header_value = serde_json::to_value(&token_data.header).map_err(|err| {
         errors::decode_error(format!("failed to serialize decoded header: {err}"))
     })?;
     let header_py = json_to_py(py, &header_value)?;
     let claims_py = json_to_py(py, &token_data.claims)?;
-    let token_owned = token.to_owned();
-    let signature = py
-        .detach(move || jws::extract_signature_bytes(&token_owned))
-        .map_err(errors::decode_error)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims_py, header_py, sig_py.into()))
 }
