@@ -37,7 +37,7 @@ jobs:
       - name: HS256 smoke regression (same gate as main CI)
         run: .venv/bin/python -m pytest tests/test_benchmark_jwt_libraries.py::test_benchmark_hs256_smoke_vs_competitors -q
 
-      - name: Run full comparison script
+      - name: Run full comparison script (default pem keys)
         run: |
           mkdir -p benchmark-results
           .venv/bin/python scripts/compare_jwt_libraries.py \
@@ -47,7 +47,17 @@ jobs:
             --warmup 50 \
             --markdown benchmark-results/ci-bench.md
 
+      - name: Run asymmetric comparison (cached competitor keys)
+        run: |
+          .venv/bin/python scripts/compare_jwt_libraries.py \
+            --algorithms RS256,EdDSA \
+            --iterations 200 \
+            --rounds 2 \
+            --warmup 50 \
+            --competitor-key-mode cached \
+            --markdown benchmark-results/ci-bench-cached.md
+
       - uses: actions/upload-artifact@v4
         with:
           name: benchmark-md
-          path: benchmark-results/ci-bench.md
+          path: benchmark-results/
