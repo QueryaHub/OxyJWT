@@ -141,19 +141,31 @@ fn optional_string(name: &str, value: &Value) -> PyResult<Option<String>> {
         .ok_or_else(|| errors::encode_error(format!("headers['{name}'] must be a string or None")))
 }
 
-/// Encode a JWT from an already-serialized JSON object string (e.g. from Python `json.dumps`).
+fn parse_payload_json(payload_json: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if let Ok(bytes) = payload_json.extract::<&[u8]>() {
+        return serde_json::from_slice(bytes)
+            .map_err(|e| errors::encode_error(format!("payload_json must be a JSON object: {e}")));
+    }
+    if let Ok(text) = payload_json.extract::<&str>() {
+        return serde_json::from_str(text)
+            .map_err(|e| errors::encode_error(format!("payload_json must be a JSON object: {e}")));
+    }
+    Err(errors::encode_error(
+        "payload_json must be a UTF-8 str or bytes containing a JSON object",
+    ))
+}
+
+/// Encode a JWT from an already-serialized JSON object (str or bytes from Python).
 #[pyfunction]
 #[pyo3(signature = (payload_json, key, algorithm = "HS256", headers = None))]
 pub fn encode_json(
     py: Python<'_>,
-    payload_json: &str,
+    payload_json: &Bound<'_, PyAny>,
     key: &Bound<'_, PyAny>,
     algorithm: &str,
     headers: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<String> {
-    let claims: Value = serde_json::from_str(payload_json).map_err(|e| {
-        errors::encode_error(format!("payload_json must be a JSON object string: {e}"))
-    })?;
+    let claims = parse_payload_json(payload_json)?;
     if !claims.is_object() {
         return Err(errors::encode_error(
             "Expecting a dict object, as JWT only supports JSON objects as payloads.",
