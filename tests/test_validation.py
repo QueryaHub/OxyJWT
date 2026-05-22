@@ -151,6 +151,34 @@ def test_subject_validation() -> None:
         oxyjwt.decode(token, "secret", algorithms=["HS256"], subject="user-b")
 
 
+def test_missing_iss_with_issuer_uses_invalid_issuer_error() -> None:
+    token = oxyjwt.encode(
+        {"sub": "user", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    with pytest.raises(oxyjwt.InvalidIssuerError, match="Invalid issuer"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            issuer="https://issuer.example",
+        )
+
+
+def test_issuer_bytes_rejected() -> None:
+    token = oxyjwt.encode(
+        {"sub": "user", "exp": int(time.time()) + 3600},
+        "secret",
+    )
+    with pytest.raises(TypeError, match="issuer must be a string"):
+        oxyjwt.decode(
+            token,
+            "secret",
+            algorithms=["HS256"],
+            issuer=b"https://issuer.example",  # type: ignore[arg-type]
+        )
+
+
 def test_required_claim_validation() -> None:
     token = oxyjwt.encode({"sub": "user"}, "secret")
 
