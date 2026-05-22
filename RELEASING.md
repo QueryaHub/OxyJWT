@@ -20,6 +20,12 @@ This checklist is for maintainers publishing **0.4.x** (and later) to PyPI via t
    mkdocs build --strict -f docs-site/mkdocs.yml
    ```
 
+   Optional extended benchmark (slower, not required for every PR):
+
+   ```bash
+   OXYJWT_BENCHMARK=1 python -m pytest -m benchmark tests/test_benchmark_jwt_libraries.py
+   ```
+
 4. **Smoke import** (after `maturin develop`):
 
    ```bash

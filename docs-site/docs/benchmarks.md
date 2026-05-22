@@ -12,14 +12,14 @@ OxyJWT is optimized for throughput on typical JWT workloads. Numbers depend on C
 
 ## Reference ratios (HS256 smoke parameters)
 
-Measured on a typical Linux dev machine with `maturin develop --release`, 50 iterations, 1 round, warmup 8 (same as CI smoke):
+Measured on a typical Linux dev machine with `maturin develop --release`, 50 iterations, 3 rounds (median timing), warmup 8 (CI smoke):
 
 | Operation | OxyJWT (ops/s) | PyJWT (ops/s) | OxyJWT / PyJWT |
 |-----------|----------------|---------------|----------------|
 | encode | ~400k+ | ~130k+ | ~3× |
 | decode | ~160k+ | ~115k+ | ~1.4× |
 
-CI asserts **≥75%** of PyJWT for both operations so large regressions fail without requiring absolute ops/s parity across runners.
+CI asserts **≥75%** of PyJWT (median ops/s across rounds) for both operations so large regressions fail without requiring absolute ops/s parity across runners.
 
 ## Running comparisons locally
 
@@ -37,6 +37,17 @@ python3 -m venv .venv
   --markdown benchmark-results/local.bench.md
 ```
 
+Fairer RSA/EdDSA comparison against PyJWT (cached competitor keys):
+
+```bash
+.venv/bin/python scripts/compare_jwt_libraries.py \
+  --algorithms RS256,EdDSA \
+  --iterations 1000 \
+  --rounds 3 \
+  --competitor-key-mode cached \
+  --markdown benchmark-results/local-cached.bench.md
+```
+
 Raw JSON/Markdown outputs are gitignored; keep them local or attach them to release notes as needed.
 
 ## CI artifacts
@@ -49,6 +60,12 @@ Main [CI](https://github.com/QueryaHub/OxyJWT/blob/main/.github/workflows/ci.yml
 
 - **Metric:** operations per second (encode and decode measured separately).
 - **Warmup:** reduces JIT and allocator noise; see script defaults.
-- **Fairness:** each library uses its supported key types; unsupported pairs are recorded as zero throughput in the script output.
+- **Key preparation (`--competitor-key-mode`):**
+  - **`pem` (default)** — used by CI smoke and the extended pytest sweep. The harness builds one signing/verification key per library before timing. OxyJWT uses `EncodingKey` / `DecodingKey` parsed from PEM once; PyJWT, Authlib, and python-jose receive PEM `str`/`bytes` and may parse that material inside each timed call. This matches “pass a PEM string to the library” usage but can understate competitor throughput on RSA/EC/EdDSA.
+  - **`cached`** — competitors that support it receive preloaded `cryptography` key objects (same idea as holding parsed keys in application code). Use this for fairer asymmetric comparisons and for release-note / weekly benchmark artifacts.
+- **HMAC (HS\*)** — both modes pass the same raw secret; key-mode differences are negligible.
+- Unsupported library/algorithm pairs are recorded as zero throughput in the script output.
+
+For asymmetric algorithms, prefer reporting **both** modes or explicitly label which mode was used. The headline table in the root README was measured with defaults that favor OxyJWT on RSA unless noted otherwise.
 
 Always compare on your own target hardware before choosing a library for production latency budgets.
