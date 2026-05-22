@@ -87,6 +87,10 @@ Do not print tokens, private keys, or HMAC secrets in logs.
 
 Prefer verified `decode` with an explicit `algorithms` allow-list in production.
 
+## Compact JWT size limit
+
+OxyJWT rejects compact JWT strings larger than **256 KiB** (same order of magnitude as the default JWKS `max_bytes` cap) with `DecodeError` before base64 or JSON parsing. This applies to verified `decode`, `decode_unverified`, `get_unverified_header`, and `jws_parse_compact`. Legitimate tokens are far smaller; huge inputs are usually denial-of-service attempts.
+
 ## Treat Unverified Helpers As Inspection Only
 
 `get_unverified_header` and `decode_unverified` do not verify the signature and do not validate claims.

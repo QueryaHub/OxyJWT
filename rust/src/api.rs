@@ -10,6 +10,10 @@ use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation;
 
+fn ensure_token_within_limit(token: &str) -> PyResult<()> {
+    jws::check_compact_token_size(token).map_err(errors::decode_error)
+}
+
 #[pyfunction]
 #[pyo3(signature = (payload, key, algorithm = "HS256", headers = None))]
 pub fn encode(
@@ -59,6 +63,7 @@ pub fn decode(
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
+    ensure_token_within_limit(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -101,6 +106,7 @@ pub fn decode_verified_complete(
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
+    ensure_token_within_limit(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -125,6 +131,7 @@ pub fn decode_verified_complete(
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
+    ensure_token_within_limit(token)?;
     let token = token.to_owned();
     let header = py
         .detach(move || decode_header(&token))
@@ -137,6 +144,7 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
+    ensure_token_within_limit(token)?;
     let token = token.to_owned();
     let token_data = py
         .detach(move || dangerous::insecure_decode::<Value>(&token))

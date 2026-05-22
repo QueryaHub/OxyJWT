@@ -15,8 +15,11 @@ from typing import ClassVar
 import pytest
 
 import oxyjwt
+from oxyjwt.exceptions import DecodeError
 from oxyjwt.jwk_exc import PyJWKClientError
 from oxyjwt.jwks_client import PyJWKClient
+
+_MAX_COMPACT_JWT_BYTES = 256 * 1024
 
 pytestmark = pytest.mark.security
 
@@ -193,6 +196,17 @@ def test_security_oversized_jwks_response_rejected() -> None:
     client = PyJWKClient(uri, max_bytes=1024, timeout=5.0)
     with pytest.raises(PyJWKClientError, match="max_bytes"):
         client.get_jwk_set()
+
+
+# --- Oversized compact JWT (issue #24) ---
+
+
+def test_security_oversized_compact_jwt_rejected_before_parse() -> None:
+    token = "a" * (_MAX_COMPACT_JWT_BYTES + 1)
+    with pytest.raises(DecodeError, match="maximum compact token size"):
+        oxyjwt.decode_unverified(token)
+    with pytest.raises(DecodeError, match="maximum compact token size"):
+        oxyjwt.get_unverified_header(token)
 
 
 # --- Algorithm confusion before JWKS fetch (issue #8) ---

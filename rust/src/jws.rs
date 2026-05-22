@@ -10,8 +10,22 @@ use crate::errors;
 
 type CompactJwsParts = (Vec<u8>, Value, Vec<u8>, Vec<u8>);
 
+/// Maximum compact serialization size (`header.payload.signature`) before parsing.
+pub const MAX_COMPACT_JWT_BYTES: usize = 256 * 1024;
+
+/// Reject oversized tokens before base64/JSON work (DoS mitigation).
+pub fn check_compact_token_size(token: &str) -> Result<(), String> {
+    if token.len() > MAX_COMPACT_JWT_BYTES {
+        return Err(format!(
+            "JWT exceeds maximum compact token size ({MAX_COMPACT_JWT_BYTES} bytes)"
+        ));
+    }
+    Ok(())
+}
+
 /// Returns `(signing_input bytes, header JSON object, raw payload bytes, signature bytes)`.
 pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
+    check_compact_token_size(token)?;
     let mut parts = token.split('.');
     let h = parts
         .next()
@@ -38,6 +52,7 @@ pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
 
 /// Extract and decode the JWS signature segment without parsing header or payload JSON.
 pub fn extract_signature_bytes(token: &str) -> Result<Vec<u8>, String> {
+    check_compact_token_size(token)?;
     let mut parts = token.rsplitn(2, '.');
     let sig_encoded = parts
         .next()
@@ -72,6 +87,13 @@ pub fn jws_parse_compact(py: Python<'_>, token: &str) -> PyResult<JwsParseOutput
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_oversized_compact_token() {
+        let token = "a".repeat(MAX_COMPACT_JWT_BYTES + 1);
+        let err = parse_compact_jws(&token).unwrap_err();
+        assert!(err.contains("maximum compact token size"));
+    }
 
     #[test]
     fn extract_signature_matches_full_parse() {
