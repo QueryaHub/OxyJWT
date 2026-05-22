@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
+import orjson
 import pytest
 
 import oxyjwt
@@ -34,6 +35,34 @@ def test_encode_datetime_claim_roundtrip() -> None:
     )
     assert decoded["sub"] == "u"
     assert isinstance(decoded["exp"], int)
+
+
+def test_decode_nested_claim_without_json_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    roundtrips: list[int] = []
+    original_loads = orjson.loads
+
+    def tracking_loads(data: bytes | bytearray | memoryview) -> object:
+        roundtrips.append(1)
+        return original_loads(data)
+
+    monkeypatch.setattr(orjson, "loads", tracking_loads)
+
+    payload = {
+        "sub": "user-123",
+        "exp": int(time.time()) + 3600,
+        "meta": {"role": "admin", "scopes": ["read", "write"]},
+    }
+    token = oxyjwt.encode(payload, "secret", algorithm="HS256")
+    out = oxyjwt.decode_complete(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert out["payload"]["meta"] == {"role": "admin", "scopes": ["read", "write"]}
+    assert roundtrips == []
 
 
 def test_decode_complete_returns_header_and_signature() -> None:

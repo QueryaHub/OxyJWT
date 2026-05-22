@@ -16,6 +16,7 @@
 
 - Encode path passes `orjson` output as bytes into Rust (`serde_json::from_slice`), removing an extra UTF-8 decode and `from_str` parse.
 - Verified `decode_complete` uses `decode_verified_complete` in Rust (one `jwt_decode` parse) instead of `jws_parse_compact` plus a second full decode.
+- Removed `orjson` dumps/loads round-trip when normalizing decode claims and headers (`_as_plain_dict`).
 
 ## 0.3.0
 
