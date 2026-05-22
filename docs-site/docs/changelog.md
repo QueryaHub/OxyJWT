@@ -5,6 +5,7 @@
 ### Fixed
 
 - `PyJWKClient.get_signing_key` refetches JWKS once when `kid` is missing from the cached set (key rotation).
+- `decode` / `decode_complete` accept `issuer` as a string or iterable (aligned with docs and Rust validation).
 
 ## 0.3.0
 
