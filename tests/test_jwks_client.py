@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import ssl
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 
@@ -378,3 +380,102 @@ def test_jwks_client_get_signing_key_from_jwt_missing_kid_raises() -> None:
     )
     with pytest.raises(PyJWKClientError, match="missing a key id"):
         c.get_signing_key_from_jwt(tok)
+
+
+class _HeaderEchoHandler(BaseHTTPRequestHandler):
+    jwks_json: ClassVar[bytes] = b"{}"
+    request_count: ClassVar[int] = 0
+
+    def do_GET(self) -> None:  # noqa: N802
+        type(self).request_count += 1
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(self.jwks_json)
+
+    def log_message(self, *args: object) -> None:  # noqa: D102
+        return
+
+
+def _serve_jwks_with_headers(jw: dict) -> str:
+    _HeaderEchoHandler.jwks_json = json.dumps(jw).encode("utf-8")
+    _HeaderEchoHandler.request_count = 0
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), _HeaderEchoHandler)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    host, port = httpd.server_address
+    return f"http://{host}:{port}/jwks.json"
+
+
+def test_jwks_client_sends_custom_headers() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks_with_headers({"keys": [jw]})
+    seen: dict[str, str] = {}
+
+    orig_request = urllib.request.Request
+
+    def capture_request(
+        url: str,
+        data: bytes | None = None,
+        headers: dict[str, str] | None = None,
+        **kwargs: object,
+    ) -> urllib.request.Request:
+        del data, kwargs
+        if headers:
+            seen.update(headers)
+        return orig_request(url, headers=headers)
+
+    urllib.request.Request = capture_request  # type: ignore[misc, assignment]
+    try:
+        c = PyJWKClient(
+            uri,
+            cache_jwk_set=False,
+            timeout=5.0,
+            headers={"Authorization": "Bearer test-token", "X-Custom": "1"},
+        )
+        c.get_jwk_set()
+    finally:
+        urllib.request.Request = orig_request  # type: ignore[misc]
+
+    assert seen.get("Authorization") == "Bearer test-token"
+    assert seen.get("X-Custom") == "1"
+    assert "application/json" in seen.get("Accept", "")
+    assert _HeaderEchoHandler.request_count == 1
+
+
+def test_jwks_client_uses_provided_ssl_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    ctx = ssl.create_default_context()
+    seen: dict[str, ssl.SSLContext] = {}
+
+    orig_urlopen = urllib.request.urlopen
+
+    def capture_urlopen(
+        req: object,
+        timeout: float | None = None,
+        context: ssl.SSLContext | None = None,
+    ) -> object:
+        if context is not None:
+            seen["context"] = context
+        return orig_urlopen(req, timeout=timeout, context=context)
+
+    monkeypatch.setattr(urllib.request, "urlopen", capture_urlopen)
+    c = PyJWKClient(uri, cache_jwk_set=False, timeout=5.0, ssl_context=ctx)
+    c.get_jwk_set()
+    assert seen["context"] is ctx
+
+
+def test_jwks_client_rejects_invalid_ssl_context_type() -> None:
+    with pytest.raises(TypeError, match="ssl.SSLContext"):
+        PyJWKClient("https://example.invalid/jwks", ssl_context=object())  # type: ignore[arg-type]

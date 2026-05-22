@@ -19,6 +19,7 @@
 - Fractional `leeway` on verified decode: Python validates `exp`/`nbf` with float semantics; Rust uses rounded whole seconds when `leeway` is an integer.
 - `PyJWKSet` O(1) lookup by `kid`; `PyJWK.key` parses `DecodingKey` lazily on first access.
 - `decode_unverified`, `get_unverified_header`, and `jws_parse_compact` release the GIL during native JWS/JWT parsing.
+- `PyJWKClient` accepts optional `headers` and `ssl_context` (PyJWT 2.8 subset).
 
 ### Performance
 
