@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "oxyjwt"
-version = "0.2.0"
+version = "0.3.0"
 description = "A Python JWT library powered by a Rust core."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,9 +15,9 @@ license = "MIT"
 authors = [
   { name = "OxyJWT contributors" },
 ]
-keywords = ["jwt", "jws", "rust", "pyo3", "maturin"]
+keywords = ["jwt", "jws", "rust", "pyo3", "maturin", "pyjwt"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
