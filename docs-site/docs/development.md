@@ -24,6 +24,17 @@ python -m venv .venv
 
 This compiles the Rust extension and installs it into `.venv`.
 
+## Type checking
+
+OxyJWT ships inline stubs (`python/oxyjwt/*.pyi`) and a `py.typed` marker. After installing dev dependencies:
+
+```bash
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m mypy python/oxyjwt tests/typing/test_public_api.py
+```
+
+CI runs the same check in a dedicated **Type check (mypy)** job. `tests/typing/test_mypy.py` wraps this for local pytest runs.
+
 ## Run Tests
 
 Pytest is configured with `pythonpath = ["python"]` in `pyproject.toml` so the editable tree under `python/oxyjwt/` (including the compiled `_oxyjwt` module) is exercised.

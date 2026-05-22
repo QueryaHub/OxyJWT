@@ -2,6 +2,11 @@
 
 ## Unreleased (0.4.0)
 
+### Added
+
+- Public `.pyi` stubs for `api_jwt`, `jwk`, `jwks_client`, `jwk_exc`, and `warnings`; `py.typed` marker for PEP 561.
+- Mypy CI job and `tests/typing/` smoke checks for the public API surface.
+
 ### Fixed
 
 - `PyJWKClient.get_signing_key` refetches JWKS once when `kid` is missing from the cached set (key rotation).
