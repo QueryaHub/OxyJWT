@@ -1,17 +1,26 @@
 """PyJWKClient — fetch JWKS over HTTP (stdlib urllib only)."""
 from __future__ import annotations
 
-import json
 import ssl
 import urllib.error
 import urllib.request
 from typing import Any
+
+import orjson
 
 from oxyjwt import _oxyjwt
 from oxyjwt.jwk import PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 
 _DEFAULT_UA = "OxyJWT-PyJWKClient/0.2 (+https://github.com/QueryaHub/OxyJWT)"
+
+
+def _header_to_plain_dict(obj: Any) -> dict[str, Any]:
+    raw = orjson.dumps(obj, default=str)
+    out = orjson.loads(raw)
+    if not isinstance(out, dict):
+        raise TypeError("expected JSON object for JWT header")
+    return out
 
 
 class PyJWKClient:
@@ -50,8 +59,8 @@ class PyJWKClient:
             return self._jwk_set
         data = self._fetch_raw()
         try:
-            obj: dict[str, Any] = json.loads(data)
-        except json.JSONDecodeError as e:
+            obj: dict[str, Any] = orjson.loads(data)
+        except orjson.JSONDecodeError as e:
             raise PyJWKClientError("JWKS response is not valid JSON") from e
         if not isinstance(obj, dict) or "keys" not in obj:
             raise PyJWKClientError("JWKS response must be a JSON object with a 'keys' field")
@@ -70,7 +79,7 @@ class PyJWKClient:
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
         header: dict[str, Any] = _oxyjwt.get_unverified_header(token)  # type: ignore[assignment]
         if not isinstance(header, dict):
-            header = json.loads(json.dumps(header))
+            header = _header_to_plain_dict(header)
         kid = header.get("kid")
         if kid is None or kid == "":
             raise PyJWKClientError("token header is missing a key id (kid)")
