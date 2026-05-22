@@ -7,13 +7,13 @@ This page explains how to build and test OxyJWT locally.
 - Python 3.10 or newer
 - Rust stable
 - `maturin`
-- `pytest`
+- `pytest` (optional: `pytest-cov` for coverage reports)
 
 Use a virtual environment. `maturin develop` expects one.
 
 ```bash
 python -m venv .venv
-.venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt
+.venv/bin/python -m pip install -U pip maturin pytest pytest-cov cryptography pyjwt
 ```
 
 ## Install The Extension Locally
@@ -26,12 +26,23 @@ This compiles the Rust extension and installs it into `.venv`.
 
 ## Run Tests
 
+Pytest is configured with `pythonpath = ["python"]` in `pyproject.toml` so the editable tree under `python/oxyjwt/` (including the compiled `_oxyjwt` module) is exercised.
+
 ```bash
 cargo fmt --manifest-path rust/Cargo.toml --check
 cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path rust/Cargo.toml
 .venv/bin/python -m pytest
+.venv/bin/python -m pytest --cov=oxyjwt --cov-report=term-missing
 ```
+
+## Contributing
+
+See [`CONTRIBUTING.md`](https://github.com/QueryaHub/OxyJWT/blob/main/CONTRIBUTING.md) in the repository root for PR expectations and security reporting (`SECURITY.md`).
+
+## Releasing
+
+Maintainers publish with a `v*` git tag; see [`RELEASING.md`](https://github.com/QueryaHub/OxyJWT/blob/main/RELEASING.md) for the full checklist (version sync, tests, PyPI Trusted Publishing).
 
 ## Build A Wheel
 
@@ -98,9 +109,15 @@ For a quick smoke test:
 .venv/bin/python scripts/compare_jwt_libraries.py --algorithms HS256,RS256,EdDSA --iterations 100 --rounds 1
 ```
 
+The test suite also runs a small **HS256** benchmark against the same harness (`tests/test_benchmark_jwt_libraries.py`). For a slower multi-algorithm pytest sweep:
+
+```bash
+OXYJWT_BENCHMARK=1 .venv/bin/python -m pytest -m benchmark -q
+```
+
 Results are written under `benchmark-results/`, which is ignored by git because benchmark numbers are machine-specific.
 
-The default Rust crypto backend is `aws_lc_rs`. It was selected because local benchmarks showed much better RSA and ECDSA performance than `rust_crypto`. To compare the pure RustCrypto backend:
+The default Rust crypto backend is `aws_lc_rs`. It was selected because local benchmarks showed much better RSA and ECDSA performance than `rust_crypto`. Linux **aarch64** wheels are built with `rust_crypto` because `aws-lc-sys` cross-compilation is unreliable in manylinux; expect different relative performance on that platform. To compare the pure RustCrypto backend locally:
 
 ```bash
 PYO3_BUILD_EXTENSION_MODULE=1 maturin build --release --no-default-features --features rust_crypto

@@ -8,7 +8,7 @@ This page gets you from an empty Python file to a signed and verified JWT.
 pip install oxyjwt
 ```
 
-OxyJWT requires Python 3.10 or newer.
+OxyJWT requires Python 3.10 or newer. The package depends on **orjson** for fast JSON handling in the Python layer (installed automatically with `pip install oxyjwt`).
 
 ## Create A Token
 
