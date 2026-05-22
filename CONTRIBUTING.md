@@ -23,6 +23,10 @@ The Python package lives under `python/`. Pytest is configured to prefer that tr
 - `pytest` (with optional `pytest --cov=oxyjwt`)
 - `mkdocs build --strict -f docs-site/mkdocs.yml` if you change documentation
 
+## Branching (0.4.0)
+
+Integration branch is **`dev`**. Feature work uses one branch per issue from `dev`, PRs target `dev`. See [docs/GITFLOW.md](docs/GITFLOW.md) for the full workflow and [milestone 0.4.0](https://github.com/QueryaHub/OxyJWT/milestone/1).
+
 ## Pull requests
 
 - Keep changes focused and match existing style (formatting, typing, minimal comments).
