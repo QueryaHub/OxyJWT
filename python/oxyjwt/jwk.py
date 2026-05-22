@@ -1,6 +1,7 @@
 """PyJWK / PyJWKSet — minimal PyJWT-compatible facades on DecodingKey.from_jwk."""
 from __future__ import annotations
 
+import warnings
 from typing import Any, Mapping, cast
 
 import orjson
@@ -12,6 +13,7 @@ from oxyjwt.exceptions import (
     PyJWKError,
     PyJWKSetError,
 )
+from oxyjwt.warnings import PyJWKSetSkipWarning
 
 
 def _as_dict(jwk: Mapping[str, Any] | str) -> dict[str, Any]:
@@ -71,10 +73,17 @@ class PyJWKSet:
         if not isinstance(keys, list):
             raise PyJWKSetError("Invalid JWK Set value")
         self.keys: list[PyJWK] = []
-        for k in keys:
+        for index, k in enumerate(keys):
             try:
                 self.keys.append(PyJWK(k))
-            except (OxyJWTError, ValueError, TypeError, KeyError, orjson.JSONDecodeError):
+            except OxyJWTError as error:
+                kid = k.get("kid") if isinstance(k, dict) else None
+                kid_label = f"kid={kid!r}" if kid is not None else "no kid"
+                warnings.warn(
+                    f"Skipped JWK at index {index} ({kid_label}): {error}",
+                    PyJWKSetSkipWarning,
+                    stacklevel=2,
+                )
                 continue
         if not self.keys:
             raise PyJWKSetError(

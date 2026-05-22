@@ -9,3 +9,7 @@ class RemovedInPyJWT3Warning(DeprecationWarning):
 
 class InsecureDecodeWarning(UserWarning):
     """Emitted when decoding without signature verification or related footguns."""
+
+
+class PyJWKSetSkipWarning(UserWarning):
+    """Emitted when a JWK entry in a set cannot be used and is skipped."""

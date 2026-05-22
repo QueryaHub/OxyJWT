@@ -14,6 +14,7 @@
 - `PyJWKClient` `max_bytes` (default 256 KiB) and optional `require_https` for JWKS fetches.
 - `PyJWKClient.get_signing_key_from_jwt` optional `algorithms` allow-list: rejects disallowed header `alg` before JWKS lookup.
 - `PyJWK` rejects JWKs with `use: enc` (encryption keys) for signature verification paths.
+- `PyJWKSet` emits `PyJWKSetSkipWarning` when unusable JWK entries are skipped (index and `kid` in message).
 
 ### Performance
 
