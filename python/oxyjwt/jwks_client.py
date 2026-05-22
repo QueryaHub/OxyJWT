@@ -5,7 +5,7 @@ import ssl
 import urllib.error
 import urllib.request
 from collections import OrderedDict
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlparse
 
 import orjson
@@ -28,6 +28,17 @@ def _read_limited_body(resp: Any, max_bytes: int) -> bytes:
     return data
 
 
+def _merge_request_headers(extra: Mapping[str, Any] | None) -> dict[str, str]:
+    headers = {
+        "User-Agent": _DEFAULT_UA,
+        "Accept": "application/json",
+    }
+    if extra is not None:
+        for key, value in extra.items():
+            headers[str(key)] = str(value)
+    return headers
+
+
 def _header_to_plain_dict(obj: Any) -> dict[str, Any]:
     raw = orjson.dumps(obj, default=str)
     out = orjson.loads(raw)
@@ -46,6 +57,8 @@ class PyJWKClient:
         timeout: float = 30.0,
         max_bytes: int = _DEFAULT_MAX_JWKS_BYTES,
         require_https: bool = False,
+        headers: Mapping[str, Any] | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if not uri or not str(uri).strip():
             raise ValueError("uri must be a non-empty string")
@@ -62,18 +75,25 @@ class PyJWKClient:
             raise ValueError("max_bytes must be at least 1")
         self._max_bytes = int(max_bytes)
         self._require_https = bool(require_https)
+        if ssl_context is not None and not isinstance(ssl_context, ssl.SSLContext):
+            raise TypeError("ssl_context must be an ssl.SSLContext or None")
+        self._headers = _merge_request_headers(headers)
+        self._ssl_context = (
+            ssl_context if ssl_context is not None else ssl.create_default_context()
+        )
         self._jwk_set: PyJWKSet | None = None
         self._kid_lru: OrderedDict[str, PyJWK] = OrderedDict()
 
     def _fetch_raw(self) -> bytes:
         req = urllib.request.Request(
             self.uri,
-            headers={"User-Agent": _DEFAULT_UA, "Accept": "application/json"},
+            headers=self._headers,
             method="GET",
         )
-        ctx = ssl.create_default_context()
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout, context=ctx) as resp:
+            with urllib.request.urlopen(
+                req, timeout=self.timeout, context=self._ssl_context
+            ) as resp:
                 return _read_limited_body(resp, self._max_bytes)
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise PyJWKClientConnectionError(str(e) or type(e).__name__) from e

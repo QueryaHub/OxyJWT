@@ -160,6 +160,8 @@ class PyJWKClient:
         timeout: float = 30.0,
         max_bytes: int = 262_144,
         require_https: bool = False,
+        headers: Mapping[str, Any] | None = None,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None: ...
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
@@ -177,6 +179,8 @@ When `algorithms` is provided, the token header `alg` is checked against that al
 
 - `max_bytes` — maximum JWKS HTTP response size (default 256 KiB). Larger bodies raise `PyJWKClientError`.
 - `require_https` — when `True`, only `https://` URIs are allowed (default `False`).
+- `headers` — extra HTTP headers merged with defaults (`User-Agent`, `Accept: application/json`). Values are coerced to strings.
+- `ssl_context` — optional `ssl.SSLContext` for HTTPS requests (default: `ssl.create_default_context()`).
 
 ## Exceptions
 
