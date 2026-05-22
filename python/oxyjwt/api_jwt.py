@@ -1,13 +1,15 @@
 """PyJWT-compatible JWT API (encode / decode / decode_complete)."""
 from __future__ import annotations
 
-import json
 import time
 import warnings
 from calendar import timegm
 from collections.abc import Iterable
 from datetime import datetime, timedelta
-from typing import Any, cast
+from json import JSONEncoder
+from typing import Any, Callable, cast
+
+import orjson
 
 from oxyjwt import _oxyjwt
 from oxyjwt.exceptions import (
@@ -47,6 +49,24 @@ def _leeway_seconds(leeway: float | timedelta) -> float:
     return float(leeway)
 
 
+def _claims_to_plain_dict(obj: Any) -> dict[str, Any]:
+    """Round-trip through JSON so Rust/PyO3-derived values become plain dicts."""
+    raw = orjson.dumps(obj, default=str)
+    out = orjson.loads(raw)
+    if not isinstance(out, dict):
+        raise TypeError("expected JSON object")
+    return cast("dict[str, Any]", out)
+
+
+def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
+    enc = encoder_cls()
+
+    def default(obj: Any) -> Any:
+        return enc.default(obj)
+
+    return default
+
+
 class PyJWT:
     def __init__(self, options: dict[str, Any] | None = None) -> None:
         self._options: dict[str, Any] = {**_DEFAULT_DECODE_OPTIONS, **(options or {})}
@@ -61,7 +81,7 @@ class PyJWT:
         key: object,
         algorithm: str | None = "HS256",
         headers: dict[str, Any] | None = None,
-        json_encoder: type[json.JSONEncoder] | None = None,
+        json_encoder: type[JSONEncoder] | None = None,
         sort_headers: bool = True,
     ) -> str:
         if not isinstance(payload, dict):
@@ -73,9 +93,16 @@ class PyJWT:
             v = pl.get(time_claim)
             if isinstance(v, datetime):
                 pl[time_claim] = timegm(v.utctimetuple())
-        body = json.dumps(
-            pl, separators=(",", ":"), cls=json_encoder, sort_keys=sort_headers
-        )
+        opts = orjson.OPT_SORT_KEYS if sort_headers else 0
+        if json_encoder is None:
+            body_b = orjson.dumps(pl, option=opts)
+        else:
+            body_b = orjson.dumps(
+                pl,
+                option=opts,
+                default=_json_default_from_encoder(json_encoder),
+            )
+        body = body_b.decode("utf-8")
         alg = algorithm if algorithm is not None else "HS256"
         return _oxyjwt.encode_json(body, key, alg, headers)
 
@@ -88,6 +115,7 @@ class PyJWT:
         verify: bool | None = None,
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
+        subject: str | None = None,
         issuer: str | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
@@ -112,6 +140,7 @@ class PyJWT:
             verify=verify,
             detached_payload=detached_payload,
             audience=audience,
+            subject=subject,
             issuer=issuer,
             leeway=leeway,
         )["payload"]
@@ -125,6 +154,7 @@ class PyJWT:
         verify: bool | None = None,
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
+        subject: str | None = None,
         issuer: str | None = None,
         leeway: float | timedelta = 0,
         **kwargs: Any,
@@ -175,15 +205,13 @@ class PyJWT:
         header: dict[str, Any] = (
             header_obj
             if isinstance(header_obj, dict)
-            else json.loads(json.dumps(header_obj))
+            else _claims_to_plain_dict(header_obj)
         )
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
             pl_d = _oxyjwt.decode_unverified(token)
             if not isinstance(pl_d, dict):
-                pl_d = cast(
-                    "dict[str, Any]", json.loads(json.dumps(pl_d, default=str))
-                )
+                pl_d = _claims_to_plain_dict(pl_d)
             self._validate_claims(pl_d, merged, audience, issuer, lwf)
             return {
                 "payload": pl_d,
@@ -198,14 +226,14 @@ class PyJWT:
             list(algorithms),
             audience=audience,
             issuer=issuer,
-            subject=None,
+            subject=subject,
             leeway=lwf,
             options=merged,
             require=req,
         )
         pl_out: dict[str, Any]
         if not isinstance(dec, dict):
-            pl_out = json.loads(json.dumps(dec, default=str))
+            pl_out = _claims_to_plain_dict(dec)
         else:
             pl_out = dec
         self._validate_claims(pl_out, merged, audience, issuer, lwf)
