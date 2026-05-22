@@ -13,6 +13,7 @@
 - `verify_sub` option (PyJWT-aligned); Python-side `sub` validation on the unverified decode path when enabled.
 - `PyJWKClient` `max_bytes` (default 256 KiB) and optional `require_https` for JWKS fetches.
 - `PyJWKClient.get_signing_key_from_jwt` optional `algorithms` allow-list: rejects disallowed header `alg` before JWKS lookup.
+- `PyJWK` rejects JWKs with `use: enc` (encryption keys) for signature verification paths.
 
 ### Performance
 
