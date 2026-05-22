@@ -57,8 +57,10 @@ type JwsParseOutput = (Py<PyBytes>, Py<PyAny>, Py<PyBytes>, Py<PyBytes>);
 
 #[pyfunction]
 pub fn jws_parse_compact(py: Python<'_>, token: &str) -> PyResult<JwsParseOutput> {
-    let (signing_input, header, payload, signature) =
-        parse_compact_jws(token).map_err(errors::decode_error)?;
+    let token = token.to_owned();
+    let (signing_input, header, payload, signature) = py
+        .detach(move || parse_compact_jws(&token))
+        .map_err(errors::decode_error)?;
     use crate::claims::json_to_py;
     let header_obj = json_to_py(py, &header)?;
     let signing = PyBytes::new(py, &signing_input);

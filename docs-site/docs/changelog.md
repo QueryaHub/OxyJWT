@@ -18,6 +18,7 @@
 - Claim validation split documented: Rust validates `exp`/`nbf` on verified decode; Python validates `iat` and PyJWT-style audience/issuer/sub rules. `verify_sub=False` no longer validates `sub` in Rust when `subject` is passed.
 - Fractional `leeway` on verified decode: Python validates `exp`/`nbf` with float semantics; Rust uses rounded whole seconds when `leeway` is an integer.
 - `PyJWKSet` O(1) lookup by `kid`; `PyJWK.key` parses `DecodingKey` lazily on first access.
+- `decode_unverified`, `get_unverified_header`, and `jws_parse_compact` release the GIL during native JWS/JWT parsing.
 
 ### Performance
 

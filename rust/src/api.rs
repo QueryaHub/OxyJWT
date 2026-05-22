@@ -115,14 +115,20 @@ pub fn decode_verified_complete(
     })?;
     let header_py = json_to_py(py, &header_value)?;
     let claims_py = json_to_py(py, &token_data.claims)?;
-    let signature = jws::extract_signature_bytes(token).map_err(errors::decode_error)?;
+    let token_owned = token.to_owned();
+    let signature = py
+        .detach(move || jws::extract_signature_bytes(&token_owned))
+        .map_err(errors::decode_error)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims_py, header_py, sig_py.into()))
 }
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    let header = decode_header(token).map_err(errors::from_jwt_decode_error)?;
+    let token = token.to_owned();
+    let header = py
+        .detach(move || decode_header(&token))
+        .map_err(errors::from_jwt_decode_error)?;
     let value = serde_json::to_value(header)
         .map_err(|err| errors::decode_error(format!("failed to serialize header: {err}")))?;
 
@@ -131,8 +137,10 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    let token_data =
-        dangerous::insecure_decode::<Value>(token).map_err(errors::from_jwt_decode_error)?;
+    let token = token.to_owned();
+    let token_data = py
+        .detach(move || dangerous::insecure_decode::<Value>(&token))
+        .map_err(errors::from_jwt_decode_error)?;
 
     json_to_py(py, &token_data.claims)
 }
