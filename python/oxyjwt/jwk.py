@@ -1,8 +1,9 @@
 """PyJWK / PyJWKSet — minimal PyJWT-compatible facades on DecodingKey.from_jwk."""
 from __future__ import annotations
 
-import json
 from typing import Any, Mapping, cast
+
+import orjson
 
 from oxyjwt import _oxyjwt
 from oxyjwt.exceptions import (
@@ -15,7 +16,7 @@ from oxyjwt.exceptions import (
 
 def _as_dict(jwk: Mapping[str, Any] | str) -> dict[str, Any]:
     if isinstance(jwk, str):
-        return cast("dict[str, Any]", json.loads(jwk))
+        return cast("dict[str, Any]", orjson.loads(jwk.encode("utf-8")))
     return dict(jwk)
 
 
@@ -39,7 +40,7 @@ class PyJWK:
 
     @staticmethod
     def from_json(data: str, algorithm: str | None = None) -> PyJWK:
-        return PyJWK.from_dict(json.loads(data), algorithm)
+        return PyJWK.from_dict(orjson.loads(data.encode("utf-8")), algorithm)
 
     @property
     def key_type(self) -> str | None:
@@ -64,7 +65,7 @@ class PyJWKSet:
         for k in keys:
             try:
                 self.keys.append(PyJWK(k))
-            except (OxyJWTError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            except (OxyJWTError, ValueError, TypeError, KeyError, orjson.JSONDecodeError):
                 continue
         if not self.keys:
             raise PyJWKSetError(
@@ -80,7 +81,7 @@ class PyJWKSet:
 
     @staticmethod
     def from_json(data: str) -> PyJWKSet:
-        return PyJWKSet.from_dict(json.loads(data))
+        return PyJWKSet.from_dict(orjson.loads(data.encode("utf-8")))
 
     def __getitem__(self, kid: str) -> PyJWK:
         for j in self.keys:
