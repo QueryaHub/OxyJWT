@@ -60,6 +60,7 @@ testpaths = ["tests"]
 pythonpath = ["python"]
 markers = [
   "benchmark: throughput comparison (slower; set OXYJWT_BENCHMARK=1 for extended)",
+  "security: 0.4.0 security regression contract tests",
 ]
 
 [tool.maturin]

@@ -23,6 +23,7 @@
 - `PyJWKClient` `lifespan` TTL (default 300s) for cached JWKS when `cache_jwk_set=True`.
 - `strict_aud` decode option for exact string audience matching (PyJWT parity).
 - `PyJWKClient` `cache_keys` parameter (default `False`, PyJWT parity); per-`kid` LRU is opt-in.
+- `tests/test_security_regression.py` — dedicated 0.4.0 security regression suite (always run in CI).
 
 ### Performance
 
