@@ -295,7 +295,7 @@ def test_fractional_leeway_allows_slightly_future_exp() -> None:
     out = oxyjwt.decode(
         token, "secret", algorithms=["HS256"], leeway=0.9
     )
-    assert out["exp"] == now
+    assert out["exp"] == now + 1
 
 
 def test_fractional_leeway_still_rejects_clearly_expired_token() -> None:
