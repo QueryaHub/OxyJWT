@@ -81,7 +81,9 @@ def test_jwks_client_lru_limits_keys_without_extra_http() -> None:
         "kid": "b",
     }
     uri = _serve_jwks({"keys": [jw_a, jw_b]})
-    c = PyJWKClient(uri, cache_jwk_set=True, max_cached_keys=1, timeout=5.0)
+    c = PyJWKClient(
+        uri, cache_jwk_set=True, cache_keys=True, max_cached_keys=1, timeout=5.0
+    )
 
     tok_a = oxyjwt.encode(
         {"sub": "1", "exp": 9_999_999_999},
@@ -479,6 +481,43 @@ def test_jwks_client_uses_provided_ssl_context(
 def test_jwks_client_rejects_invalid_ssl_context_type() -> None:
     with pytest.raises(TypeError, match="ssl.SSLContext"):
         PyJWKClient("https://example.invalid/jwks", ssl_context=object())  # type: ignore[arg-type]
+
+
+def test_jwks_client_cache_keys_false_keeps_no_kid_lru() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    c = PyJWKClient(uri, cache_jwk_set=True, cache_keys=False, timeout=5.0)
+    c.get_signing_key("alpha")
+    c.get_signing_key("alpha")
+    assert len(c._kid_lru) == 0  # noqa: SLF001
+    assert _JWKHandler.request_count == 1
+
+
+def test_jwks_client_cache_keys_true_uses_kid_lru() -> None:
+    jw_a = {
+        "kty": "oct",
+        "k": _b64u(b"secret-a-32-bytes-long-ok!!!!"),
+        "kid": "a",
+    }
+    jw_b = {
+        "kty": "oct",
+        "k": _b64u(b"secret-b-32-bytes-long-ok!!!!"),
+        "kid": "b",
+    }
+    uri = _serve_jwks({"keys": [jw_a, jw_b]})
+    c = PyJWKClient(
+        uri, cache_jwk_set=True, cache_keys=True, max_cached_keys=2, timeout=5.0
+    )
+    c.get_signing_key("a")
+    c.get_signing_key("b")
+    assert len(c._kid_lru) == 2  # noqa: SLF001
+    again = c.get_signing_key("a")
+    assert again.key_id == "a"
+    assert _JWKHandler.request_count == 1
 
 
 def test_jwks_client_rejects_non_positive_lifespan_when_caching() -> None:

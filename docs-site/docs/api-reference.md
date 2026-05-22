@@ -156,6 +156,7 @@ class PyJWKClient:
         uri: str,
         *,
         cache_jwk_set: bool = True,
+        cache_keys: bool = False,
         max_cached_keys: int = 16,
         timeout: float = 30.0,
         max_bytes: int = 262_144,
@@ -183,6 +184,8 @@ When `algorithms` is provided, the token header `alg` is checked against that al
 - `headers` — extra HTTP headers merged with defaults (`User-Agent`, `Accept: application/json`). Values are coerced to strings.
 - `ssl_context` — optional `ssl.SSLContext` for HTTPS requests (default: `ssl.create_default_context()`).
 - `lifespan` — TTL in seconds for the cached JWK Set when `cache_jwk_set=True` (default `300`). Must be &gt; 0. Expired entries are refetched on the next `get_jwk_set()`; `get_signing_key` still refetches once on unknown `kid` via `refresh=True`.
+- `cache_keys` — LRU cache for resolved signing keys by `kid` (default `False`, same as PyJWT). Tier-1 JWK Set caching (`cache_jwk_set`) is separate and stays enabled by default. OxyJWT 0.3 always cached keys; enable `cache_keys=True` for the old per-`kid` LRU behavior.
+- `max_cached_keys` — max entries in the signing-key LRU when `cache_keys=True` (default `16`).
 
 ## Exceptions
 
