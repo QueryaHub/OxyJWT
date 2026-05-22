@@ -372,8 +372,8 @@ class PyJWT:
                     audience,
                     strict=strict_aud,
                 )
-        if options.get("verify_iss", True) and not (
-            rust_standard_claims and issuer is not None
+        if options.get("verify_iss", True) and (
+            issuer is not None or not rust_standard_claims
         ):
             self._validate_iss_field(payload, issuer)
         if options.get("verify_sub", True) and not (
