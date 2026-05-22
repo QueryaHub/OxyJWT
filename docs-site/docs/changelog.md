@@ -24,6 +24,7 @@
 - `strict_aud` decode option for exact string audience matching (PyJWT parity).
 - `PyJWKClient` `cache_keys` parameter (default `False`, PyJWT parity); per-`kid` LRU is opt-in.
 - `tests/test_security_regression.py` — dedicated 0.4.0 security regression suite (always run in CI).
+- Benchmark CI smoke: HS256 OxyJWT vs PyJWT ratio gates tightened to ≥75% (was 25%); decode checked too. Docs describe smoke / extended / full workflows.
 
 ### Performance
 

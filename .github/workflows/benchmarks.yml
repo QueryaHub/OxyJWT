@@ -1,3 +1,4 @@
+# Full throughput comparison (not a hard regression gate). HS256 ratio gates run in main CI via pytest smoke.
 name: Benchmarks
 
 on:
@@ -33,7 +34,10 @@ jobs:
       - name: Build and install OxyJWT
         run: .venv/bin/maturin develop --release
 
-      - name: Run comparison script
+      - name: HS256 smoke regression (same gate as main CI)
+        run: .venv/bin/python -m pytest tests/test_benchmark_jwt_libraries.py::test_benchmark_hs256_smoke_vs_competitors -q
+
+      - name: Run full comparison script
         run: |
           mkdir -p benchmark-results
           .venv/bin/python scripts/compare_jwt_libraries.py \
