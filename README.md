@@ -2,7 +2,7 @@
 
 OxyJWT is a Python JWT/JWS library backed by a Rust core. The public API follows **PyJWT** for `encode`, `decode`, `decode_complete`, JWK/JWKS helpers, and the `PyJWKClient`. When **signature verification** is enabled (the default), you must pass an `algorithms` allow-list, matching common PyJWT usage. Unverified decode is available only when you explicitly set `options["verify_signature"]` to `False` (treat the payload as untrusted).
 
-This project is still **alpha** software; see the [changelog](docs-site/docs/changelog.md) for **0.2.0** breaking changes (exception hierarchy).
+This project is **beta** software on the `0.3.x` line; see the [changelog](docs-site/docs/changelog.md) for **0.2.0** breaking changes (exception hierarchy) and **0.3.0** notes.
 
 ## Documentation
 
@@ -34,14 +34,18 @@ The static site is served on **http://127.0.0.1:8001** by default. Point your ow
 pip install oxyjwt
 ```
 
+Requires **Python 3.10+**. The wheel installs **[orjson](https://github.com/ijl/orjson)** as a runtime dependency (JSON serialization in the Python API layer).
+
 For local development:
 
 ```bash
 python -m venv .venv
-.venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt
+.venv/bin/python -m pip install -U pip maturin pytest pytest-cov cryptography pyjwt
 .venv/bin/maturin develop --release
 .venv/bin/python -m pytest
 ```
+
+See [RELEASING.md](RELEASING.md) for maintainer release steps.
 
 ## HMAC Example
 
@@ -143,6 +147,10 @@ PYO3_BUILD_EXTENSION_MODULE=1 maturin build --release --no-default-features --fe
 - `decode_unverified` and `get_unverified_header` do not authenticate a token. Use them only for inspection/debugging flows, never for authorization.
 
 OxyJWT implements JWT/JWS signing and verification. JWE encryption is not part of the first version.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request expectations. Report security issues privately via [SECURITY.md](SECURITY.md).
 
 ## 🚀 Performance Benchmarks
 
