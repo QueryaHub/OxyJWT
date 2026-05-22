@@ -42,7 +42,7 @@ This checklist is for maintainers publishing **0.4.x** (and later) to PyPI via t
    git push origin v0.4.0
    ```
 
-3. The **Release** workflow builds wheels (Linux x86_64/aarch64, macOS, Windows) + sdist and publishes to PyPI (requires the `pypi` environment and [Trusted Publishing](https://docs.pypi.org/trusted-publishers/)).
+3. The **Release** workflow runs full [CI](.github/workflows/ci.yml) via `workflow_call`, then builds wheels (Linux x86_64/aarch64, macOS, Windows) + sdist and publishes to PyPI only if CI passes (requires the `pypi` environment and [Trusted Publishing](https://docs.pypi.org/trusted-publishers/)).
 
 4. On GitHub, create a **Release** from the tag. Use [`.github/RELEASE_NOTES_v0.4.0.md`](.github/RELEASE_NOTES_v0.4.0.md) or the **0.4.0** section in `docs-site/docs/changelog.md` as the release notes body.
 
