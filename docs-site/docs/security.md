@@ -103,6 +103,38 @@ Bad uses:
 - trusting `sub`, `role`, `aud`, or `iss`;
 - building the allowed algorithm list from the unverified header.
 
+## JWKS (`PyJWKClient`)
+
+When keys rotate at your identity provider, fetch JWKS over HTTPS and resolve keys by `kid`:
+
+```python
+client = oxyjwt.PyJWKClient(
+    "https://auth.example.com/.well-known/jwks.json",
+    require_https=True,
+)
+signing_key = client.get_signing_key_from_jwt(
+    token,
+    algorithms=["RS256"],
+)
+claims = oxyjwt.decode(
+    token,
+    signing_key.key,
+    algorithms=["RS256"],
+    audience="api",
+    issuer="https://auth.example.com",
+)
+```
+
+Security practices:
+
+- Pass **`algorithms`** to `get_signing_key_from_jwt` so disallowed header `alg` values are rejected **before** JWKS HTTP I/O.
+- Enable **`require_https`** for production JWKS URLs.
+- Set **`max_bytes`** (default 256 KiB) to cap oversized responses.
+- Do not disable signature verification after resolving a key; `get_signing_key_from_jwt` only inspects the header to find `kid`.
+- Tier-2 **`cache_keys`** is off by default; enable only if you understand LRU retention of `PyJWK` material in memory.
+
+Full parameter reference: [API reference — `PyJWKClient`](api-reference.md#pyjwkclient). Reporting vulnerabilities: [SECURITY.md](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
 ## JWS, Not JWE
 
 OxyJWT signs and verifies JWT/JWS tokens. It does not encrypt token contents. Anyone who receives a JWT can read its claims unless you use a separate encryption layer.

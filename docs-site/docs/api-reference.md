@@ -147,7 +147,45 @@ Use `DecodingKey` for verifying tokens.
 
 ## `PyJWKClient`
 
-Fetches a JWKS document from `uri` and resolves signing keys by `kid`.
+HTTP client for fetching a [JWKS](https://datatracker.ietf.org/doc/html/rfc7517) document and resolving signing keys by `kid`. Uses the Python standard library (`urllib`) only — no extra HTTP dependencies.
+
+Typical flow with an identity provider that publishes rotating RSA/EC keys:
+
+```python
+import oxyjwt
+
+client = oxyjwt.PyJWKClient(
+    "https://auth.example.com/.well-known/jwks.json",
+    require_https=True,
+    headers={"Authorization": "Bearer <service-token>"},
+)
+
+token = "<compact-jwt-from-client>"
+signing_key = client.get_signing_key_from_jwt(
+    token,
+    algorithms=["RS256"],  # server-side allow-list; checked before HTTP
+)
+claims = oxyjwt.decode(
+    token,
+    signing_key.key,
+    algorithms=["RS256"],
+    audience="api",
+    issuer="https://auth.example.com",
+)
+```
+
+See also the [FastAPI cookbook](cookbooks/fastapi-jwt.md) and [Security — JWKS](security.md#jwks-pyjwkclient).
+
+### Two-tier caching
+
+| Tier | Option | Default | Behavior |
+|------|--------|---------|----------|
+| **1 — JWK Set** | `cache_jwk_set`, `lifespan` | on, 300s | Caches the parsed JWKS JSON. Refetch when TTL expires or `get_jwk_set(refresh=True)`. |
+| **2 — signing keys** | `cache_keys`, `max_cached_keys` | off, 16 | LRU of `PyJWK` objects by `kid` (no time expiry). Opt-in; matches PyJWT default. |
+
+On `get_signing_key`, if `kid` is missing from the current set, the client refetches JWKS **once** and retries (key rotation). A second miss raises `KeyError` (no further HTTP retries in that call).
+
+### Constructor
 
 ```python
 class PyJWKClient:
@@ -165,27 +203,75 @@ class PyJWKClient:
         ssl_context: ssl.SSLContext | None = None,
         lifespan: float = 300.0,
     ) -> None: ...
-
-    def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
-    def get_signing_key(self, kid: str) -> PyJWK: ...
-    def get_signing_key_from_jwt(
-        self,
-        jwt: str | bytes,
-        algorithms: list[str] | None = None,
-    ) -> PyJWK: ...
 ```
 
-If `get_signing_key` does not find `kid` in the cached JWKS, it refetches the document **once** (`get_jwk_set(refresh=True)`) and retries. This supports IdP key rotation without manual cache clearing. A second miss still raises `KeyError` (no further HTTP retries).
+| Parameter | Description |
+|-----------|-------------|
+| `uri` | JWKS endpoint URL (`http://` or `https://`). |
+| `cache_jwk_set` | Cache the fetched JWKS document (tier 1). |
+| `lifespan` | Seconds before tier-1 cache expires; must be &gt; 0 when `cache_jwk_set=True`. |
+| `cache_keys` | Enable per-`kid` signing-key LRU (tier 2). Default `False` (PyJWT parity). |
+| `max_cached_keys` | Max LRU entries when `cache_keys=True`. |
+| `timeout` | HTTP GET timeout in seconds. |
+| `max_bytes` | Max JWKS response size (default 256 KiB). Larger bodies raise `PyJWKClientError`. |
+| `require_https` | When `True`, reject non-HTTPS `uri` values. |
+| `headers` | Extra request headers merged with `User-Agent` and `Accept: application/json`. |
+| `ssl_context` | `ssl.SSLContext` for HTTPS (default `ssl.create_default_context()`). |
 
-When `algorithms` is provided, the token header `alg` is checked against that allow-list **before** any JWKS fetch or `kid` lookup. Disallowed or missing `alg` raises `InvalidAlgorithmError` without HTTP I/O.
+Raises `ValueError` for invalid `uri` / `max_bytes`; `TypeError` for invalid `ssl_context`; `PyJWKClientError` when `require_https` blocks the URI or `lifespan` is invalid.
 
-- `max_bytes` — maximum JWKS HTTP response size (default 256 KiB). Larger bodies raise `PyJWKClientError`.
-- `require_https` — when `True`, only `https://` URIs are allowed (default `False`).
-- `headers` — extra HTTP headers merged with defaults (`User-Agent`, `Accept: application/json`). Values are coerced to strings.
-- `ssl_context` — optional `ssl.SSLContext` for HTTPS requests (default: `ssl.create_default_context()`).
-- `lifespan` — TTL in seconds for the cached JWK Set when `cache_jwk_set=True` (default `300`). Must be &gt; 0. Expired entries are refetched on the next `get_jwk_set()`; `get_signing_key` still refetches once on unknown `kid` via `refresh=True`.
-- `cache_keys` — LRU cache for resolved signing keys by `kid` (default `False`, same as PyJWT). Tier-1 JWK Set caching (`cache_jwk_set`) is separate and stays enabled by default. OxyJWT 0.3 always cached keys; enable `cache_keys=True` for the old per-`kid` LRU behavior.
-- `max_cached_keys` — max entries in the signing-key LRU when `cache_keys=True` (default `16`).
+### `get_jwk_set`
+
+```python
+def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
+```
+
+Returns a `PyJWKSet` parsed from the endpoint. When `refresh=False` and tier-1 cache is valid, returns the cached set without HTTP. When `refresh=True`, always fetches a new document and updates the cache (clears tier-2 LRU entries).
+
+Raises `PyJWKClientConnectionError` on network/timeout failures; `PyJWKClientError` on oversized body or invalid JSON shape.
+
+### `get_signing_key`
+
+```python
+def get_signing_key(self, kid: str) -> PyJWK: ...
+```
+
+Returns the `PyJWK` for `kid`. Uses tier-1 cache, then tier-2 LRU if enabled. Refetches JWKS once on `KeyError` (rotation). Empty `kid` raises `PyJWKClientError`.
+
+### `get_signing_key_from_jwt`
+
+```python
+def get_signing_key_from_jwt(
+    self,
+    jwt: str | bytes,
+    algorithms: list[str] | None = None,
+) -> PyJWK: ...
+```
+
+Reads `kid` (and optionally `alg`) from the token header via `get_unverified_header`, then calls `get_signing_key`.
+
+When `algorithms` is provided:
+
+- empty list → `InvalidAlgorithmError`;
+- header `alg` not in the list → `InvalidAlgorithmError` **before** any JWKS HTTP request;
+- `none` → `InvalidAlgorithmError`.
+
+Missing or empty `kid` → `PyJWKClientError`.
+
+### Security notes
+
+- Pass your server-side **`algorithms`** allow-list to `get_signing_key_from_jwt` and again to `decode` — do not trust the header `alg` alone. See [Security](security.md).
+- Prefer **`require_https=True`** in production.
+- Use **`max_bytes`** to limit denial-of-service from huge JWKS responses.
+- `get_unverified_header` inside `get_signing_key_from_jwt` does not verify the signature; only use the returned `PyJWK.key` with verified `decode`. Details: [SECURITY.md](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md) and [Security — unverified helpers](security.md#treat-unverified-helpers-as-inspection-only).
+- Encryption keys (`use: enc`) in the JWKS are rejected when building `PyJWK`; skipped entries emit `PyJWKSetSkipWarning`.
+
+### Related exceptions
+
+- `PyJWKClientError` — invalid client configuration, JWKS shape, size limits, missing `kid`.
+- `PyJWKClientConnectionError` — HTTP/URL errors (subclass of `PyJWKClientError`).
+- `KeyError` — `kid` not found after one refresh attempt.
+- `InvalidAlgorithmError` — disallowed `alg` when `algorithms` is passed to `get_signing_key_from_jwt`.
 
 ## Exceptions
 
