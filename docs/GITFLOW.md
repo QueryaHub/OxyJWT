@@ -10,14 +10,43 @@ Integration branch: **`dev`**. Production releases merge `dev` → `main` and ta
 | `dev` | Integration for 0.4.0 work; all feature PRs target here |
 | `issue/<number>-<short-slug>` | One issue, one branch, from latest `dev` |
 
+## Stay in sync with remote (always)
+
+Run **before** every checkout, branch, push, or PR — and again **after** a PR is merged into `dev`:
+
+```bash
+git fetch --all --prune
+git checkout dev
+git pull --ff-only origin dev
+```
+
+Optional one-liner (from repo root):
+
+```bash
+git fetch --all --prune && git checkout dev && git pull --ff-only origin dev
+```
+
+Before `git push`, fetch again so you do not push on a stale base:
+
+```bash
+git fetch origin
+git pull --rebase origin "$(git branch --show-current)"   # feature branch tracking remote
+# or: git merge origin/<branch> if you prefer merge commits
+```
+
+**Full local verification** (before opening a PR):
+
+```bash
+cargo fmt --manifest-path rust/Cargo.toml --check
+cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path rust/Cargo.toml
+pytest
+```
+
 ## Workflow per issue
 
-1. Pick the highest-priority open issue (labels `p0` → `p1` → `p2`, then `security` before `performance`).
-2. Update local `dev`:
-   ```bash
-   git checkout dev
-   git pull origin dev
-   ```
+1. Pick the highest-priority **open** issue (labels `p0` → `p1` → `p2`, then `security` before `performance`). Confirm it has milestone **0.4.0** and the right labels (see [GitHub metadata](#github-metadata-labels--milestones)).
+2. Sync `dev` (commands above).
 3. Create a branch:
    ```bash
    git checkout -b issue/42-jwks-refresh-on-miss
@@ -35,7 +64,14 @@ Integration branch: **`dev`**. Production releases merge `dev` → `main` and ta
    gh pr create --base dev --title "feat(jwks): refresh JWKS on unknown kid (#42)" --body "Closes #42"
    ```
 6. After review and green CI, squash-merge or merge commit into `dev`.
-7. Delete the feature branch.
+7. Sync again, then delete the feature branch:
+   ```bash
+   git fetch --all --prune
+   git checkout dev && git pull --ff-only origin dev
+   git branch -d issue/42-jwks-refresh-on-miss
+   git push origin --delete issue/42-jwks-refresh-on-miss   # if pushed
+   ```
+8. Ensure the issue is **closed** (auto via `Closes #N` in PR body, or `gh issue close N`).
 
 ## Commits
 
@@ -67,6 +103,52 @@ When `dev` is ready:
 
 Milestone: **[0.4.0](https://github.com/QueryaHub/OxyJWT/milestone/1)** (27 issues).
 
+## GitHub metadata (labels & milestones)
+
+Agents and maintainers should keep issues and PRs labeled consistently. Use [`gh`](https://cli.github.com/) (already authenticated).
+
+### New or updated issues
+
+```bash
+# Create with labels + milestone
+gh issue create \
+  --title "fix(api): example" \
+  --body "..." \
+  --label "p0,security" \
+  --milestone "0.4.0"
+
+# Fix metadata on existing issue
+gh issue edit 3 --add-label "p0,security" --milestone "0.4.0"
+gh issue edit 3 --remove-label "p2"
+```
+
+### Pull requests
+
+```bash
+gh pr create --base dev \
+  --title "fix(api): issuer list (#3)" \
+  --body "Closes #3" \
+  --label "p0,security" \
+  --milestone "0.4.0"
+
+# After PR exists
+gh pr edit 28 --add-label "p0,security" --milestone "0.4.0"
+```
+
+### When starting / finishing work
+
+| Step | Action |
+|------|--------|
+| Start issue | `gh issue view N` — verify `p0`/`p1`/`p2`, type label, milestone `0.4.0` |
+| Open PR | Same labels on PR; body must include `Closes #N` |
+| Merged | `git fetch` + `git pull` on `dev`; `gh issue view N` → state `CLOSED` |
+
+List open 0.4.0 work:
+
+```bash
+gh issue list --milestone "0.4.0" --state open --label "p0"
+```
+
 ## Recommended work order (by priority)
 
 Take the next open issue from the top; branch name pattern: `issue/<num>-<short-slug>`.
@@ -75,7 +157,7 @@ Take the next open issue from the top; branch name pattern: `issue/<num>-<short-
 
 | # | Title |
 |---|--------|
-| [#1](https://github.com/QueryaHub/OxyJWT/issues/1) | JWKS refresh on unknown `kid` |
+| ~~[#1](https://github.com/QueryaHub/OxyJWT/issues/1)~~ | ~~JWKS refresh on unknown `kid`~~ (done, PR #28) |
 | [#3](https://github.com/QueryaHub/OxyJWT/issues/3) | Issuer list validation fix |
 | [#2](https://github.com/QueryaHub/OxyJWT/issues/2) | Warnings for `verify_signature=False` |
 | [#4](https://github.com/QueryaHub/OxyJWT/issues/4) | Encode: single JSON path |
@@ -98,12 +180,18 @@ Take the next open issue from the top; branch name pattern: `issue/<num>-<short-
 ## CLI shortcuts
 
 ```bash
+# Sync dev
+git fetch --all --prune && git checkout dev && git pull --ff-only origin dev
+
 # New issue branch
-ISSUE=42
-SLUG=jwks-refresh-on-miss
-git checkout dev && git pull origin dev
+ISSUE=3
+SLUG=issuer-list-validation
 git checkout -b "issue/${ISSUE}-${SLUG}"
 
-# PR to dev
-gh pr create --base dev --assignee @me
+# PR to dev (labels + milestone + auto-close issue)
+gh pr create --base dev \
+  --title "fix(api): issuer list (#${ISSUE})" \
+  --body "Closes #${ISSUE}" \
+  --label "p0,security" \
+  --milestone "0.4.0"
 ```
