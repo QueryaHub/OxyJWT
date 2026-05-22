@@ -56,6 +56,19 @@ def test_issuer_validation() -> None:
         oxyjwt.decode(token, "secret", algorithms=["HS256"], issuer="other")
 
 
+def test_subject_validation() -> None:
+    token = oxyjwt.encode(
+        {
+            "sub": "user-a",
+            "exp": int(time.time()) + 3600,
+        },
+        "secret",
+    )
+
+    with pytest.raises(oxyjwt.InvalidSubjectError):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], subject="user-b")
+
+
 def test_required_claim_validation() -> None:
     token = oxyjwt.encode({"sub": "user"}, "secret")
 
