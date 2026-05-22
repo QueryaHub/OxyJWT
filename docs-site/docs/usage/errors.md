@@ -24,17 +24,18 @@ except oxyjwt.InvalidTokenError:
 ```text
 OxyJWTError
 ├── EncodeError
-├── DecodeError
-│   └── InvalidTokenError
-│       ├── InvalidSignatureError
-│       ├── ExpiredSignatureError
-│       ├── ImmatureSignatureError
-│       ├── InvalidAudienceError
-│       ├── InvalidIssuerError
-│       ├── InvalidSubjectError
-│       ├── InvalidAlgorithmError
-│       └── MissingRequiredClaimError
-└── InvalidKeyError
+├── InvalidKeyError
+└── InvalidTokenError
+    ├── DecodeError
+    │   └── InvalidSignatureError
+    ├── ExpiredSignatureError
+    ├── ImmatureSignatureError
+    ├── InvalidAudienceError
+    ├── InvalidIssuerError
+    ├── InvalidIssuedAtError
+    ├── InvalidSubjectError
+    ├── InvalidAlgorithmError
+    └── MissingRequiredClaimError
 ```
 
 ## Common Errors
