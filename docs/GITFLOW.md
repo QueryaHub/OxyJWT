@@ -64,6 +64,7 @@ pytest
    gh pr create --base dev --title "feat(jwks): refresh JWKS on unknown kid (#42)" --body "Closes #42"
    ```
 6. After review and green CI, squash-merge or merge commit into `dev`.
+   Direct pushes to `dev` also run [CI](.github/workflows/ci.yml) (same jobs as PRs).
 7. Sync again, then delete the feature branch:
    ```bash
    git fetch --all --prune
