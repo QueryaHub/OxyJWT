@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (0.4.0)
+
+### Fixed
+
+- `PyJWKClient.get_signing_key` refetches JWKS once when `kid` is missing from the cached set (key rotation).
+
 ## 0.3.0
 
 Documentation, PyJWT parity, and operational polish. PyPI classifiers now mark the project as **Beta**; the API remains pre-1.0. See [Versioning](versioning.md). Security reporting is described in [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).

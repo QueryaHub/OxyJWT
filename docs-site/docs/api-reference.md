@@ -145,6 +145,28 @@ class DecodingKey:
 
 Use `DecodingKey` for verifying tokens.
 
+## `PyJWKClient`
+
+Fetches a JWKS document from `uri` and resolves signing keys by `kid`.
+
+```python
+class PyJWKClient:
+    def __init__(
+        self,
+        uri: str,
+        *,
+        cache_jwk_set: bool = True,
+        max_cached_keys: int = 16,
+        timeout: float = 30.0,
+    ) -> None: ...
+
+    def get_jwk_set(self, refresh: bool = False) -> PyJWKSet: ...
+    def get_signing_key(self, kid: str) -> PyJWK: ...
+    def get_signing_key_from_jwt(self, jwt: str | bytes) -> PyJWK: ...
+```
+
+If `get_signing_key` does not find `kid` in the cached JWKS, it refetches the document **once** (`get_jwk_set(refresh=True)`) and retries. This supports IdP key rotation without manual cache clearing. A second miss still raises `KeyError` (no further HTTP retries).
+
 ## Exceptions
 
 All OxyJWT exceptions inherit from `OxyJWTError`. The layout matches PyJWT: `InvalidTokenError` is the common base for most decode-time errors; `DecodeError` and `InvalidSignatureError` nest under it.
