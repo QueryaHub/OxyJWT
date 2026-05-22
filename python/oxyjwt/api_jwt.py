@@ -323,6 +323,7 @@ class PyJWT:
             subject,
             lwf,
             rust_time_claims=whole_leeway and detached_payload is None,
+            rust_standard_claims=whole_leeway and detached_payload is None,
         )
         return {
             "payload": pl_out,
@@ -340,12 +341,17 @@ class PyJWT:
         leeway: float = 0,
         *,
         rust_time_claims: bool = False,
+        rust_standard_claims: bool = False,
     ) -> None:
         """Validate claims after decode.
 
         Verified decode (`rust_time_claims=True`): ``exp`` and ``nbf`` are checked in
         Rust (jsonwebtoken); this layer handles ``iat`` plus audience/issuer/sub
         rules that depend on call-time parameters.
+
+        When ``rust_standard_claims=True``, aud/iss/sub checks already run in Rust
+        for call-time ``audience`` / ``issuer`` / ``subject``; Python still runs
+        ``strict_aud`` and claim checks Rust does not cover.
         """
         self._validate_required(payload, options)
         now = time.time()
@@ -356,15 +362,23 @@ class PyJWT:
                 self._validate_nbf_fields(payload, now, leeway)
             if "exp" in payload and options.get("verify_exp", True):
                 self._validate_exp_fields(payload, now, leeway)
-        if options.get("verify_iss", True):
-            self._validate_iss_field(payload, issuer)
+        strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
-            self._validate_aud_field(
-                payload,
-                audience,
-                strict=bool(options.get("strict_aud", False)),
-            )
-        if options.get("verify_sub", True):
+            if strict_aud or not (
+                rust_standard_claims and audience is not None
+            ):
+                self._validate_aud_field(
+                    payload,
+                    audience,
+                    strict=strict_aud,
+                )
+        if options.get("verify_iss", True) and not (
+            rust_standard_claims and issuer is not None
+        ):
+            self._validate_iss_field(payload, issuer)
+        if options.get("verify_sub", True) and not (
+            rust_standard_claims and subject is not None
+        ):
             self._validate_sub_field(payload, subject)
 
     @staticmethod
