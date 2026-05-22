@@ -95,3 +95,5 @@ token = oxyjwt.encode(
 ```
 
 OxyJWT does not allow `headers["alg"]` to override the `algorithm` argument.
+
+Supported built-in header fields: `typ`, `cty`, `kid`, `jku`, `x5u`, `x5t`, `x5t#S256`, `url`, and `nonce`. Any other **string** name is emitted as a custom JWS header parameter (for example `X-Trace-Id`). Custom values must be strings; complex fields such as `jwk` and `x5c` are not accepted in `headers`.

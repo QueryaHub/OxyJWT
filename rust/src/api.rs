@@ -186,10 +186,21 @@ fn apply_headers(
             "typ" => header.typ = optional_string("typ", value)?,
             "cty" => header.cty = optional_string("cty", value)?,
             "kid" => header.kid = optional_string("kid", value)?,
-            other => {
+            "jku" => header.jku = optional_string("jku", value)?,
+            "x5u" => header.x5u = optional_string("x5u", value)?,
+            "x5t" => header.x5t = optional_string("x5t", value)?,
+            "x5t#S256" => header.x5t_s256 = optional_string("x5t#S256", value)?,
+            "url" => header.url = optional_string("url", value)?,
+            "nonce" => header.nonce = optional_string("nonce", value)?,
+            "jwk" | "x5c" | "crit" | "enc" | "zip" => {
                 return Err(errors::encode_error(format!(
-                    "unsupported JWT header field: {other}"
+                    "JWT header field '{key}' is not supported in encode headers (use supported string fields or custom string parameters)"
                 )));
+            }
+            name => {
+                header
+                    .extras
+                    .insert(name.to_owned(), custom_header_string(name, value)?);
             }
         }
     }
@@ -206,6 +217,14 @@ fn optional_string(name: &str, value: &Value) -> PyResult<Option<String>> {
         .as_str()
         .map(|value| Some(value.to_owned()))
         .ok_or_else(|| errors::encode_error(format!("headers['{name}'] must be a string or None")))
+}
+
+fn custom_header_string(name: &str, value: &Value) -> PyResult<String> {
+    value.as_str().map(|s| s.to_owned()).ok_or_else(|| {
+        errors::encode_error(format!(
+            "headers['{name}'] must be a string for custom JWT header parameters"
+        ))
+    })
 }
 
 fn parse_payload_json(payload_json: &Bound<'_, PyAny>) -> PyResult<Value> {

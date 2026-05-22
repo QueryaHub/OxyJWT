@@ -4,6 +4,7 @@
 
 ### Added
 
+- `encode` accepts custom string JWT header parameters beyond `alg` / `typ` / `cty` / `kid`, plus optional standard string JWS fields (`jku`, `x5u`, `x5t`, `x5t#S256`, `url`, `nonce`).
 - Public `.pyi` stubs for `api_jwt`, `jwk`, `jwks_client`, `jwk_exc`, and `warnings`; `py.typed` marker for PEP 561.
 - Mypy CI job and `tests/typing/` smoke checks for the public API surface.
 
