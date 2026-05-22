@@ -107,6 +107,28 @@ def test_issuer_decode_parity() -> None:
     )
 
 
+def test_issuer_list_decode_parity() -> None:
+    secret = "hmac-secret-32-bytes-long-ok!!!"
+    payload = {
+        "sub": "u",
+        "iss": "https://issuer.example",
+        "exp": int(time.time()) + 600,
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+    issuers = ["https://issuer.example", "https://backup.example"]
+    assert jwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=issuers,
+    ) == oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        issuer=issuers,
+    )
+
+
 def test_subject_decode_parity() -> None:
     secret = "hmac-secret-32-bytes-long-ok!!!"
     payload = {
