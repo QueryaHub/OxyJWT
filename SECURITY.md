@@ -32,6 +32,10 @@ This policy covers the `oxyjwt` Python package and its Rust extension (`_oxyjwt`
 
 OxyJWT implements JWT/JWS signing and verification. Correct use still depends on application choices (algorithm allow-lists, audience/issuer checks, secret management). Read the [Security](docs-site/docs/security.md) documentation before deploying to production.
 
+### JWKS (`PyJWKClient`)
+
+When loading keys from a JWKS URL: use HTTPS (`require_https=True` in production), cap response size (`max_bytes`), pass an explicit `algorithms` list to `get_signing_key_from_jwt` (checked before HTTP), and always verify tokens with `decode` after resolving the key. See [Security — JWKS](docs-site/docs/security.md#jwks-pyjwkclient) and the [API reference](docs-site/docs/api-reference.md#pyjwkclient).
+
 ### `verify_signature=False`
 
 Decoding with `options["verify_signature"] = False` skips cryptographic verification. OxyJWT emits `InsecureDecodeWarning` in that case. Do not use unverified payloads for authorization.
