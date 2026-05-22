@@ -79,7 +79,11 @@ class PyJWKClient:
             self._kid_lru.move_to_end(kid)
             return cached
         jwks = self.get_jwk_set()
-        jwk = jwks[kid]
+        try:
+            jwk = jwks[kid]
+        except KeyError:
+            jwks = self.get_jwk_set(refresh=True)
+            jwk = jwks[kid]
         self._kid_lru[kid] = jwk
         while len(self._kid_lru) > self._max_cached_keys:
             self._kid_lru.popitem(last=False)
