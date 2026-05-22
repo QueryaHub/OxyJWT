@@ -128,6 +128,9 @@ class PyJWT:
             v = pl.get(time_claim)
             if isinstance(v, datetime):
                 pl[time_claim] = timegm(v.utctimetuple())
+        alg = algorithm if algorithm is not None else "HS256"
+        if json_encoder is None and not sort_headers:
+            return _oxyjwt.encode(pl, key, alg, headers)
         opts = orjson.OPT_SORT_KEYS if sort_headers else 0
         if json_encoder is None:
             body_b = orjson.dumps(pl, option=opts)
@@ -137,7 +140,6 @@ class PyJWT:
                 option=opts,
                 default=_json_default_from_encoder(json_encoder),
             )
-        alg = algorithm if algorithm is not None else "HS256"
         return _oxyjwt.encode_json(body_b, key, alg, headers)
 
     def decode(
