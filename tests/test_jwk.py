@@ -58,8 +58,9 @@ def test_pyjwkset_warns_when_skipping_invalid_key() -> None:
     k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
     bad_jwk = {"kid": "bad-k"}
     good_jwk = {"kty": "oct", "k": k, "kid": "good-k"}
+    s = PyJWKSet.from_dict({"keys": [bad_jwk, good_jwk]})
     with pytest.warns(oxyjwt.PyJWKSetSkipWarning, match="index 0") as records:
-        s = PyJWKSet.from_dict({"keys": [bad_jwk, good_jwk]})
+        assert len(s.keys) == 1
     assert len(records) == 1
     assert "bad-k" in str(records[0].message)
     assert len(s.keys) == 1
@@ -71,9 +72,9 @@ def test_pyjwkset_skips_enc_keys_keeps_signing_keys() -> None:
     k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
     enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
     sig_jwk = {"kty": "oct", "k": k, "kid": "sig-k", "use": "sig"}
+    s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
     with pytest.warns(oxyjwt.PyJWKSetSkipWarning, match="enc-k"):
-        s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
-    assert len(s.keys) == 1
+        assert len(s.keys) == 1
     assert s["sig-k"].key_id == "sig-k"
     tok = oxyjwt.encode(
         {"x": 1, "exp": 9_999_999_999},
@@ -93,9 +94,10 @@ def test_pyjwkset_only_encryption_keys_raises() -> None:
     secret = b"my-secret-32-bytes-long-ok!!!!"
     k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
     enc_jwk = {"kty": "oct", "k": k, "kid": "enc-k", "use": "enc"}
+    s = PyJWKSet.from_dict({"keys": [enc_jwk]})
     with pytest.warns(oxyjwt.PyJWKSetSkipWarning):
         with pytest.raises(PyJWKSetError, match="usable keys"):
-            PyJWKSet.from_dict({"keys": [enc_jwk]})
+            _ = s.keys
 
 
 def test_pyjwkset_getitem_uses_kid_index() -> None:

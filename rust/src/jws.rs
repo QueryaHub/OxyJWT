@@ -121,17 +121,7 @@ pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
 
 /// Extract and decode the JWS signature segment without parsing header or payload JSON.
 pub fn extract_signature_bytes(token: &str) -> Result<Vec<u8>, String> {
-    check_compact_token_size(token)?;
-    let mut parts = token.rsplitn(2, '.');
-    let sig_encoded = parts
-        .next()
-        .ok_or_else(|| "Not enough segments".to_string())?;
-    if parts.next().is_none() {
-        return Err("Not enough segments".to_string());
-    }
-    if parts.next().is_some() {
-        return Err("Too many segments".to_string());
-    }
+    let (_, _, sig_encoded) = split_compact_segments(token)?;
     URL_SAFE_NO_PAD
         .decode(sig_encoded)
         .map_err(|e| e.to_string())
@@ -173,6 +163,16 @@ mod tests {
             input,
             format!("{header}.{}", String::from_utf8_lossy(payload)).as_bytes()
         );
+    }
+
+    #[test]
+    fn rejects_extra_compact_segments() {
+        let token = "a.b.c.d";
+        assert_eq!(
+            split_compact_segments(token).unwrap_err(),
+            "Too many segments"
+        );
+        assert_eq!(parse_compact_jws(token).unwrap_err(), "Too many segments");
     }
 
     #[test]

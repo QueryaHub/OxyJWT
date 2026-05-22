@@ -4,6 +4,49 @@
 
 (No changes yet.)
 
+## 0.5.0 — 2026-05-22
+
+Performance and hardening release: faster encode/decode hot paths, JWKS concurrency fixes, stricter compact JWT validation, PyJWT-aligned issuer errors, and expanded security regression tests. The API remains pre-1.0 (Beta). See [Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
+### Upgrading from 0.4.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface.
+- Malformed compact JWTs (wrong segment count) are rejected consistently in Rust before decode.
+- `detached_payload` is capped at **256 KiB** (RFC 7797).
+- When `issuer=` is passed, a token **without** `iss` now raises **`InvalidIssuerError`** (PyJWT parity; previously could slip through on some paths).
+
+### Fixed
+
+- `issuer=` always runs issuer validation in Python; missing `iss` raises `InvalidIssuerError` instead of being skipped.
+- `PyJWKClient` JWKS / signing-key cache is thread-safe under concurrent `get_signing_key` (lock around cache mutations).
+
+### Security
+
+- `detached_payload` size capped at 256 KiB before attach (RFC 7797).
+- Compact JWT segment validation unified in Rust (reject extra/missing segments before `jwt` parse).
+- Expanded `tests/test_security_regression.py` — oversized JWT, detached cap, `none` alg, concurrent JWKS client, issuer-without-iss.
+
+### Performance
+
+- Verified decode: skip `get_unverified_header` unless empty payload segment (RFC 7797 detached form).
+- Unverified decode / `get_unverified_header`: single native parse path (no double segment split).
+- `encode`: use Rust `encode` directly when no custom `json_encoder` (no `encode_json` round-trip).
+- `decode_verified_complete`: hold decoding key by reference; combine detach + verify in one Rust path.
+- Skip redundant Python `aud` / `iss` / `sub` validation when Rust already validated on verified decode.
+- RFC 7797 verified path: `exp` / `nbf` / `iat` validated in Rust for detached tokens.
+- `PyJWK` / `PyJWKSet`: lazy `DecodingKey` materialization; large JWKS sets avoid upfront parse of every key.
+
+### CI & documentation
+
+- Full CI runs on pushes to `dev` (same gates as PRs).
+- PyPI [Release workflow](https://github.com/QueryaHub/OxyJWT/blob/main/.github/workflows/release.yml) runs CI via `workflow_call` before publishing.
+- HS256 smoke benchmark: 3 rounds, **median** ops/s vs PyJWT; gate remains ≥75%.
+- [Benchmarks](benchmarks.md): document smoke / extended / full tiers and PEM vs `cached` competitor key modes.
+
 ## 0.4.0 — 2026-05-22
 
 Production hardening release: security fixes, performance improvements, expanded PyJWT/JWKS parity, public typing stubs, and stricter CI. The API remains pre-1.0 (Beta). See [Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).

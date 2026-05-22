@@ -506,7 +506,11 @@ def parse_args() -> argparse.Namespace:
         "--competitor-key-mode",
         choices=("pem", "cached"),
         default="pem",
-        help="Use PEM bytes for competitors or preloaded cryptography key objects where supported.",
+        help=(
+            "pem (default): competitors get PEM str/bytes; OxyJWT uses pre-parsed "
+            "EncodingKey/DecodingKey. cached: preloaded cryptography objects for "
+            "fairer RSA/EC/EdDSA vs PyJWT/Authlib."
+        ),
     )
     parser.add_argument(
         "--algorithms",

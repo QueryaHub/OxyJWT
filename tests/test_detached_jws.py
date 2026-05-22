@@ -24,7 +24,7 @@ def _make_rfc7797_token(
         body,
         secret,
         algorithm="HS256",
-        headers={"b64": False},
+        headers={"b64": False, "crit": ["b64"]},
         is_payload_detached=True,
     )
     return token, body
@@ -66,6 +66,14 @@ def test_detached_wrong_payload_fails_verification() -> None:
     with pytest.raises(oxyjwt.InvalidSignatureError):
         oxyjwt.decode(
             token, "secret", algorithms=["HS256"], detached_payload=tampered
+        )
+
+
+def test_detached_expired_payload_rejected_in_rust() -> None:
+    token, payload = _make_rfc7797_token({"sub": "u", "exp": 1})
+    with pytest.raises(oxyjwt.ExpiredSignatureError):
+        oxyjwt.decode(
+            token, "secret", algorithms=["HS256"], detached_payload=payload
         )
 
 

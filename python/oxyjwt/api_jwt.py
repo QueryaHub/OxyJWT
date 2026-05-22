@@ -73,6 +73,26 @@ def _as_plain_dict(obj: Any) -> dict[str, Any]:
     raise TypeError("expected JSON object for JWT claims or header")
 
 
+def _require_detached_payload_for_rfc7797(
+    token: str,
+    *,
+    detached_payload: bytes | None,
+    verify_signature: bool,
+) -> None:
+    """Raise when verified decode needs RFC 7797 detached_payload (b64: false)."""
+    if detached_payload is not None or not verify_signature:
+        return
+    segments = token.split(".", 2)
+    if len(segments) < 3 or segments[1] != "":
+        return
+    header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+    if header_peek.get("b64") is False:
+        raise DecodeError(
+            'It is required that you pass in a value for the "detached_payload" '
+            "argument to decode a message having the b64 header set to false."
+        )
+
+
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
     enc = encoder_cls()
 
@@ -108,6 +128,9 @@ class PyJWT:
             v = pl.get(time_claim)
             if isinstance(v, datetime):
                 pl[time_claim] = timegm(v.utctimetuple())
+        alg = algorithm if algorithm is not None else "HS256"
+        if json_encoder is None and not sort_headers:
+            return _oxyjwt.encode(pl, key, alg, headers)
         opts = orjson.OPT_SORT_KEYS if sort_headers else 0
         if json_encoder is None:
             body_b = orjson.dumps(pl, option=opts)
@@ -117,7 +140,6 @@ class PyJWT:
                 option=opts,
                 default=_json_default_from_encoder(json_encoder),
             )
-        alg = algorithm if algorithm is not None else "HS256"
         return _oxyjwt.encode_json(body_b, key, alg, headers)
 
     def decode(
@@ -209,13 +231,11 @@ class PyJWT:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
-        if detached_payload is None and co.get("verify_signature", True):
-            header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
-            if header_peek.get("b64") is False:
-                raise DecodeError(
-                    'It is required that you pass in a value for the "detached_payload" '
-                    "argument to decode a message having the b64 header set to false."
-                )
+        _require_detached_payload_for_rfc7797(
+            token,
+            detached_payload=detached_payload,
+            verify_signature=bool(co.get("verify_signature", True)),
+        )
         merged = {**self._options, **co}
         if not co.get("verify_signature", True):
             if subject is not None and not merged.get("verify_sub", False):
@@ -255,12 +275,12 @@ class PyJWT:
 
         lwf = _leeway_seconds(leeway)
         if not co.get("verify_signature", True):
-            header = _as_plain_dict(_oxyjwt.get_unverified_header(token))
-            _s, _header_obj, _pld, sigb = _oxyjwt.jws_parse_compact(token)
+            _s, header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
+            header = _as_plain_dict(header_obj)
             if detached_payload is not None:
                 pl_d = _as_plain_dict(orjson.loads(bytes(detached_payload)))
             else:
-                pl_d = _as_plain_dict(_oxyjwt.decode_unverified(token))
+                pl_d = _as_plain_dict(orjson.loads(bytes(pld_bytes)))
             self._validate_claims(
                 pl_d, merged, audience, issuer, subject, lwf
             )
@@ -302,7 +322,8 @@ class PyJWT:
             issuer,
             subject,
             lwf,
-            rust_time_claims=whole_leeway and detached_payload is None,
+            rust_time_claims=whole_leeway,
+            rust_standard_claims=whole_leeway and detached_payload is None,
         )
         return {
             "payload": pl_out,
@@ -320,12 +341,17 @@ class PyJWT:
         leeway: float = 0,
         *,
         rust_time_claims: bool = False,
+        rust_standard_claims: bool = False,
     ) -> None:
         """Validate claims after decode.
 
         Verified decode (`rust_time_claims=True`): ``exp`` and ``nbf`` are checked in
         Rust (jsonwebtoken); this layer handles ``iat`` plus audience/issuer/sub
         rules that depend on call-time parameters.
+
+        When ``rust_standard_claims=True``, aud/iss/sub checks already run in Rust
+        for call-time ``audience`` / ``issuer`` / ``subject``; Python still runs
+        ``strict_aud`` and claim checks Rust does not cover.
         """
         self._validate_required(payload, options)
         now = time.time()
@@ -336,15 +362,23 @@ class PyJWT:
                 self._validate_nbf_fields(payload, now, leeway)
             if "exp" in payload and options.get("verify_exp", True):
                 self._validate_exp_fields(payload, now, leeway)
-        if options.get("verify_iss", True):
-            self._validate_iss_field(payload, issuer)
+        strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
-            self._validate_aud_field(
-                payload,
-                audience,
-                strict=bool(options.get("strict_aud", False)),
-            )
-        if options.get("verify_sub", True):
+            if strict_aud or not (
+                rust_standard_claims and audience is not None
+            ):
+                self._validate_aud_field(
+                    payload,
+                    audience,
+                    strict=strict_aud,
+                )
+        if options.get("verify_iss", True) and (
+            issuer is not None or not rust_standard_claims
+        ):
+            self._validate_iss_field(payload, issuer)
+        if options.get("verify_sub", True) and not (
+            rust_standard_claims and subject is not None
+        ):
             self._validate_sub_field(payload, subject)
 
     @staticmethod
@@ -410,7 +444,7 @@ class PyJWT:
         if issuer is None:
             return
         if "iss" not in payload:
-            raise MissingRequiredClaimError("iss")
+            raise InvalidIssuerError("Invalid issuer")
         issuers = [issuer] if isinstance(issuer, str) else list(issuer)
         if payload["iss"] not in issuers:
             raise InvalidIssuerError("Invalid issuer")

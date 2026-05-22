@@ -65,7 +65,8 @@ class PyJWK:
 
     @property
     def key_id(self) -> str | None:
-        return self._jwk.get("kid")
+        kid = self._jwk.get("kid")
+        return str(kid) if kid is not None else None
 
     @property
     def public_key_use(self) -> str | None:
@@ -78,28 +79,50 @@ class PyJWKSet:
             raise PyJWKSetError("The JWK Set did not contain any keys")
         if not isinstance(keys, list):
             raise PyJWKSetError("Invalid JWK Set value")
-        self.keys: list[PyJWK] = []
-        self._by_kid: dict[str, PyJWK] = {}
-        for index, k in enumerate(keys):
-            try:
-                jwk = PyJWK(k)
-            except OxyJWTError as error:
-                kid = k.get("kid") if isinstance(k, dict) else None
-                kid_label = f"kid={kid!r}" if kid is not None else "no kid"
-                warnings.warn(
-                    f"Skipped JWK at index {index} ({kid_label}): {error}",
-                    PyJWKSetSkipWarning,
-                    stacklevel=2,
-                )
-                continue
-            self.keys.append(jwk)
-            kid = jwk.key_id
-            if kid is not None and kid not in self._by_kid:
-                self._by_kid[kid] = jwk
-        if not self.keys:
-            raise PyJWKSetError(
-                "The JWK Set did not contain any usable keys."
+        self._raw_keys: list[dict[str, Any]] = [
+            k for k in keys if isinstance(k, dict)
+        ]
+        if not self._raw_keys:
+            raise PyJWKSetError("The JWK Set did not contain any keys")
+        self._by_kid_raw: dict[str, dict[str, Any]] = {}
+        for raw in self._raw_keys:
+            kid = raw.get("kid")
+            if kid is not None and str(kid) not in self._by_kid_raw:
+                self._by_kid_raw[str(kid)] = raw
+        self._materialized: dict[str, PyJWK] = {}
+        self._keys_cache: list[PyJWK] | None = None
+
+    def _materialize(self, raw: dict[str, Any], index: int) -> PyJWK | None:
+        try:
+            return PyJWK(raw)
+        except OxyJWTError as error:
+            kid = raw.get("kid")
+            kid_label = f"kid={kid!r}" if kid is not None else "no kid"
+            warnings.warn(
+                f"Skipped JWK at index {index} ({kid_label}): {error}",
+                PyJWKSetSkipWarning,
+                stacklevel=3,
             )
+            return None
+
+    @property
+    def keys(self) -> list[PyJWK]:
+        if self._keys_cache is None:
+            built: list[PyJWK] = []
+            for index, raw in enumerate(self._raw_keys):
+                jwk = self._materialize(raw, index)
+                if jwk is None:
+                    continue
+                built.append(jwk)
+                kid = jwk.key_id
+                if kid is not None:
+                    self._materialized[kid] = jwk
+            if not built:
+                raise PyJWKSetError(
+                    "The JWK Set did not contain any usable keys."
+                )
+            self._keys_cache = built
+        return self._keys_cache
 
     @staticmethod
     def from_dict(obj: dict[str, Any]) -> PyJWKSet:
@@ -113,10 +136,23 @@ class PyJWKSet:
         return PyJWKSet.from_dict(orjson.loads(data.encode("utf-8")))
 
     def __getitem__(self, kid: str) -> PyJWK:
+        if kid in self._materialized:
+            return self._materialized[kid]
         try:
-            return self._by_kid[kid]
+            raw = self._by_kid_raw[kid]
         except KeyError as e:
             raise KeyError(f"keyset has no key for kid: {kid!r}") from e
+        jwk = PyJWK(raw)
+        self._materialized[kid] = jwk
+        return jwk
+
+    @property
+    def _by_kid(self) -> dict[str, PyJWK]:
+        """Materialized kid index (compat for tests and introspection)."""
+        for kid in self._by_kid_raw:
+            if kid not in self._materialized:
+                self[kid]
+        return self._materialized
 
 
 __all__ = ["PyJWK", "PyJWKSet"]

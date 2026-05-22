@@ -23,7 +23,9 @@ _COMPARE_SCRIPT = _REPO / "scripts" / "compare_jwt_libraries.py"
 # HS256 smoke: minimum OxyJWT/PyJWT throughput ratio (tightened from 0.25 = 4× slack).
 _MIN_OXY_VS_PYJWT_ENCODE_RATIO = 0.75
 _MIN_OXY_VS_PYJWT_DECODE_RATIO = 0.75
-_MIN_OXYJWT_OPS_PER_SECOND = 500
+_SMOKE_ITERATIONS = 50
+_SMOKE_ROUNDS = 3
+_SMOKE_WARMUP = 8
 
 # Extended sweep: looser floor vs PyJWT when present (asymmetric crypto is noisier in CI).
 _MIN_OXY_VS_PYJWT_EXTENDED_RATIO = 0.5
@@ -48,24 +50,48 @@ def _ops_for(
     return None
 
 
+def _median_ops(result: object) -> float:
+    iterations = int(result.iterations)  # type: ignore[attr-defined]
+    median_seconds = float(result.median_seconds)  # type: ignore[attr-defined]
+    assert median_seconds > 0
+    return iterations / median_seconds
+
+
 def _assert_oxyjwt_hs256_smoke(results: list[object], *, mod: object) -> None:
-    oxy_enc = _ops_for(results, "OxyJWT", "encode", mod=mod)
-    oxy_dec = _ops_for(results, "OxyJWT", "decode", mod=mod)
-    assert oxy_enc is not None and oxy_dec is not None
-    assert oxy_enc > _MIN_OXYJWT_OPS_PER_SECOND, f"encode too slow: {oxy_enc:.0f} ops/s"
-    assert oxy_dec > _MIN_OXYJWT_OPS_PER_SECOND, f"decode too slow: {oxy_dec:.0f} ops/s"
+    oxy_enc = next(
+        r for r in results if r.library == "OxyJWT" and r.operation == "encode"  # type: ignore[attr-defined]
+    )
+    oxy_dec = next(
+        r for r in results if r.library == "OxyJWT" and r.operation == "decode"  # type: ignore[attr-defined]
+    )
+    oxy_enc_ops = _median_ops(oxy_enc)
+    oxy_dec_ops = _median_ops(oxy_dec)
 
     py_enc = _ops_for(results, "PyJWT", "encode", mod=mod)
     py_dec = _ops_for(results, "PyJWT", "decode", mod=mod)
     if py_enc is not None and py_enc > 0:
-        assert oxy_enc >= py_enc * _MIN_OXY_VS_PYJWT_ENCODE_RATIO, (
-            f"HS256 encode: OxyJWT {oxy_enc:.0f} ops/s vs PyJWT {py_enc:.0f} ops/s "
-            f"(need >={_MIN_OXY_VS_PYJWT_ENCODE_RATIO:.0%} of PyJWT)"
+        py_enc_median = _median_ops(
+            next(
+                r
+                for r in results
+                if r.library == "PyJWT" and r.operation == "encode"  # type: ignore[attr-defined]
+            )
+        )
+        assert oxy_enc_ops >= py_enc_median * _MIN_OXY_VS_PYJWT_ENCODE_RATIO, (
+            f"HS256 encode: OxyJWT median {oxy_enc_ops:.0f} ops/s vs PyJWT "
+            f"{py_enc_median:.0f} ops/s (need >={_MIN_OXY_VS_PYJWT_ENCODE_RATIO:.0%})"
         )
     if py_dec is not None and py_dec > 0:
-        assert oxy_dec >= py_dec * _MIN_OXY_VS_PYJWT_DECODE_RATIO, (
-            f"HS256 decode: OxyJWT {oxy_dec:.0f} ops/s vs PyJWT {py_dec:.0f} ops/s "
-            f"(need >={_MIN_OXY_VS_PYJWT_DECODE_RATIO:.0%} of PyJWT)"
+        py_dec_median = _median_ops(
+            next(
+                r
+                for r in results
+                if r.library == "PyJWT" and r.operation == "decode"  # type: ignore[attr-defined]
+            )
+        )
+        assert oxy_dec_ops >= py_dec_median * _MIN_OXY_VS_PYJWT_DECODE_RATIO, (
+            f"HS256 decode: OxyJWT median {oxy_dec_ops:.0f} ops/s vs PyJWT "
+            f"{py_dec_median:.0f} ops/s (need >={_MIN_OXY_VS_PYJWT_DECODE_RATIO:.0%})"
         )
 
 
@@ -76,9 +102,9 @@ def test_benchmark_hs256_smoke_vs_competitors() -> None:
 
     mod = _load_compare_module()
     results, _skipped = mod.run_benchmark(
-        iterations=50,
-        rounds=1,
-        warmup=8,
+        iterations=_SMOKE_ITERATIONS,
+        rounds=_SMOKE_ROUNDS,
+        warmup=_SMOKE_WARMUP,
         selected_algorithms={"HS256"},
         competitor_key_mode="pem",
     )

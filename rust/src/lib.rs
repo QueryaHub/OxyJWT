@@ -1,6 +1,7 @@
 mod algorithms;
 mod api;
 mod claims;
+mod claims_validate;
 mod errors;
 mod jws;
 mod keys;

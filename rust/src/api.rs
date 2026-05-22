@@ -10,13 +10,17 @@ use serde_json::Value;
 
 use crate::algorithms::{algorithm_name, parse_algorithm, parse_algorithm_name};
 use crate::claims::{json_to_py, py_to_json_for_encode};
+use crate::claims_validate;
 use crate::errors;
 use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation;
 
-fn ensure_token_within_limit(token: &str) -> PyResult<()> {
-    jws::check_compact_token_size(token).map_err(errors::decode_error)
+/// Size limit plus strict three-segment compact JWS check (before jsonwebtoken).
+fn ensure_valid_compact_jwt(token: &str) -> PyResult<()> {
+    jws::split_compact_segments(token)
+        .map(|_| ())
+        .map_err(errors::decode_error)
 }
 
 #[pyfunction]
@@ -68,7 +72,7 @@ pub fn decode(
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -113,7 +117,7 @@ pub fn decode_verified_complete(
     require: Option<Vec<String>>,
     detached_payload: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
@@ -129,19 +133,23 @@ pub fn decode_verified_complete(
         );
     }
 
-    let token_data = py
-        .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
-        .map_err(errors::from_jwt_decode_error)?;
+    let token_owned = token.to_owned();
+    let validation = decode_validation.validation;
+    let (token_data, signature) = py.detach(
+        move || -> PyResult<(jsonwebtoken::TokenData<Value>, Vec<u8>)> {
+            let token_data = jwt_decode::<Value>(&token_owned, &decoding_key, &validation)
+                .map_err(errors::from_jwt_decode_error)?;
+            let signature =
+                jws::extract_signature_bytes(&token_owned).map_err(errors::decode_error)?;
+            Ok((token_data, signature))
+        },
+    )?;
 
     let header_value = serde_json::to_value(&token_data.header).map_err(|err| {
         errors::decode_error(format!("failed to serialize decoded header: {err}"))
     })?;
     let header_py = json_to_py(py, &header_value)?;
     let claims_py = json_to_py(py, &token_data.claims)?;
-    let token_owned = token.to_owned();
-    let signature = py
-        .detach(move || jws::extract_signature_bytes(&token_owned))
-        .map_err(errors::decode_error)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims_py, header_py, sig_py.into()))
 }
@@ -153,10 +161,17 @@ fn decode_rfc7797_verified_complete(
     decode_validation: &validation::DecodeValidation,
     decoding_key: &jsonwebtoken::DecodingKey,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
+    if detached_payload.len() > jws::MAX_COMPACT_JWT_BYTES {
+        return Err(errors::decode_error(format!(
+            "Detached payload exceeds maximum size ({} bytes)",
+            jws::MAX_COMPACT_JWT_BYTES
+        )));
+    }
     let token = token.to_owned();
     let payload = detached_payload.to_vec();
     let allowed_algorithms = decode_validation.algorithms.clone();
     let decoding_key = decoding_key.clone();
+    let validation = decode_validation.validation.clone();
     let (parts, claims, signature) = py
         .detach(move || {
             let parts = jws::parse_rfc7797_compact(&token)?;
@@ -185,6 +200,8 @@ fn decode_rfc7797_verified_complete(
             if !verified {
                 return Err("Signature verification failed".to_string());
             }
+            claims_validate::validate_claims_value(&claims, &validation)
+                .map_err(|err| err.to_string())?;
             let signature = URL_SAFE_NO_PAD
                 .decode(&parts.signature_segment)
                 .map_err(|e| e.to_string())?;
@@ -199,6 +216,24 @@ fn decode_rfc7797_verified_complete(
 }
 
 fn map_rfc7797_decode_error(message: String) -> PyErr {
+    if message.contains("Expired") || message.contains("expired") {
+        return errors::ExpiredSignatureError::new_err(message);
+    }
+    if message.contains("Immature") || message.contains("not yet valid") {
+        return errors::ImmatureSignatureError::new_err(message);
+    }
+    if message.contains("Invalid audience") || message.contains("Audience") {
+        return errors::InvalidAudienceError::new_err(message);
+    }
+    if message.contains("Invalid issuer") || message.contains("issuer") {
+        return errors::InvalidIssuerError::new_err(message);
+    }
+    if message.contains("Invalid subject") || message.contains("Subject") {
+        return errors::InvalidSubjectError::new_err(message);
+    }
+    if message.contains("Missing") && message.contains("claim") {
+        return errors::MissingRequiredClaimError::new_err(message);
+    }
     if message.contains("Signature verification failed") {
         return errors::InvalidSignatureError::new_err(message);
     }
@@ -216,7 +251,7 @@ fn map_rfc7797_decode_error(message: String) -> PyErr {
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let token = token.to_owned();
     let header = py
         .detach(move || jws::parse_compact_header_json(&token))
@@ -227,7 +262,7 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_token_within_limit(token)?;
+    ensure_valid_compact_jwt(token)?;
     let token = token.to_owned();
     let token_data = py
         .detach(move || dangerous::insecure_decode::<Value>(&token))

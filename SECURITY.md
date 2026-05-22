@@ -4,11 +4,12 @@
 
 | Version line | Support |
 | --- | --- |
-| **0.4.x** (current) | Security fixes and patch releases |
+| **0.5.x** (current) | Security fixes and patch releases |
+| **0.4.x** | Best-effort backports only for critical issues |
 | **0.3.x** | Best-effort backports only for critical issues |
 | **0.2.x** and older | Unsupported |
 
-Security fixes target the latest **0.4.x** release. See the [changelog](docs-site/docs/changelog.md) for release history.
+Security fixes target the latest **0.5.x** release. See the [changelog](docs-site/docs/changelog.md) for release history.
 
 ## Reporting a vulnerability
 
