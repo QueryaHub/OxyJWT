@@ -1,6 +1,7 @@
 use jsonwebtoken::{Algorithm, DecodingKey as JwtDecodingKey, EncodingKey as JwtEncodingKey};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use zeroize::Zeroizing;
 
 use crate::algorithms::{ensure_algorithm_family, ensure_single_family, KeyFamily};
 use crate::claims;
@@ -32,11 +33,11 @@ pub struct DecodingKey {
 impl EncodingKey {
     #[staticmethod]
     pub fn from_secret(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let bytes = bytes_from_py(secret)?;
+        let bytes = secret_bytes_from_py(secret)?;
         Ok(Self {
             material: EncodingKeyMaterial::new(
                 KeyFamily::Hmac,
-                JwtEncodingKey::from_secret(&bytes),
+                JwtEncodingKey::from_secret(bytes.as_ref()),
             ),
         })
     }
@@ -83,11 +84,11 @@ impl EncodingKey {
 impl DecodingKey {
     #[staticmethod]
     pub fn from_secret(secret: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let bytes = bytes_from_py(secret)?;
+        let bytes = secret_bytes_from_py(secret)?;
         Ok(Self {
             material: DecodingKeyMaterial::new(
                 KeyFamily::Hmac,
-                JwtDecodingKey::from_secret(&bytes),
+                JwtDecodingKey::from_secret(bytes.as_ref()),
             ),
         })
     }
@@ -196,7 +197,8 @@ pub fn encoding_key_from_py(
         ));
     }
 
-    Ok(JwtEncodingKey::from_secret(&bytes_from_py(key)?))
+    let bytes = secret_bytes_from_py(key)?;
+    Ok(JwtEncodingKey::from_secret(bytes.as_ref()))
 }
 
 pub fn decoding_key_from_py(
@@ -214,7 +216,13 @@ pub fn decoding_key_from_py(
         ));
     }
 
-    Ok(JwtDecodingKey::from_secret(&bytes_from_py(key)?))
+    let bytes = secret_bytes_from_py(key)?;
+    Ok(JwtDecodingKey::from_secret(bytes.as_ref()))
+}
+
+/// Copy HMAC secret material from Python; buffer is zeroized on drop.
+fn secret_bytes_from_py(value: &Bound<'_, PyAny>) -> PyResult<Zeroizing<Vec<u8>>> {
+    Ok(Zeroizing::new(bytes_from_py(value)?))
 }
 
 fn bytes_from_py(value: &Bound<'_, PyAny>) -> PyResult<Vec<u8>> {
