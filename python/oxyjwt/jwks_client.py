@@ -63,6 +63,7 @@ class PyJWKClient:
         headers: Mapping[str, Any] | None = None,
         ssl_context: ssl.SSLContext | None = None,
         lifespan: float = 300.0,
+        refresh_cooldown: float = 0.0,
     ) -> None:
         if not uri or not str(uri).strip():
             raise ValueError("uri must be a non-empty string")
@@ -78,6 +79,7 @@ class PyJWKClient:
                 f'lifespan must be greater than 0, the input is "{lifespan}"'
             )
         self._lifespan = float(lifespan)
+        self._refresh_cooldown = max(0.0, float(refresh_cooldown))
         self._cache_keys = bool(cache_keys)
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
@@ -116,8 +118,16 @@ class PyJWKClient:
             raise PyJWKClientConnectionError(str(e) or type(e).__name__) from e
 
     def _load_jwk_set(self, refresh: bool) -> PyJWKSet:
-        if self._cache_jwk_set and not refresh and self._jwk_set_cache_valid():
+        now = time.monotonic()
+        if not refresh and self._cache_jwk_set and self._jwk_set_cache_valid():
             return self._jwk_set  # type: ignore[return-value]
+        if (
+            refresh
+            and self._jwk_set is not None
+            and self._jwk_set_fetched_at is not None
+            and (now - self._jwk_set_fetched_at) < self._refresh_cooldown
+        ):
+            return self._jwk_set
         data = self._fetch_raw()
         try:
             obj: dict[str, Any] = orjson.loads(data)
@@ -131,7 +141,7 @@ class PyJWKClient:
         self._kid_lru.clear()
         if self._cache_jwk_set:
             self._jwk_set = jwks
-            self._jwk_set_fetched_at = time.monotonic()
+            self._jwk_set_fetched_at = now
         return jwks
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet:

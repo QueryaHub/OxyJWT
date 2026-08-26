@@ -627,3 +627,22 @@ def test_jwks_client_concurrent_get_signing_key() -> None:
         t.join()
     assert errors == []
     assert _JWKHandler.request_count <= 2
+
+
+def test_jwks_client_refresh_cooldown_throttles_rapid_refreshes() -> None:
+    jw = {
+        "kty": "oct",
+        "k": _b64u(b"the-shared-secret-xy"),
+        "kid": "alpha",
+    }
+    uri = _serve_jwks({"keys": [jw]})
+    c = PyJWKClient(uri, cache_jwk_set=True, refresh_cooldown=1.0, timeout=5.0)
+    c.get_jwk_set()
+    assert _JWKHandler.request_count == 1
+
+    # Immediate lookups for non-existent keys within cooldown window shouldn't hammer the endpoint
+    for _ in range(5):
+        with pytest.raises(KeyError):
+            c.get_signing_key("non-existent-kid")
+    assert _JWKHandler.request_count == 1
+
