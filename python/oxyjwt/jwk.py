@@ -1,6 +1,7 @@
 """PyJWK / PyJWKSet — minimal PyJWT-compatible facades on DecodingKey.from_jwk."""
 from __future__ import annotations
 
+import threading
 import warnings
 from typing import Any, Mapping, cast
 
@@ -39,16 +40,19 @@ class PyJWK:
         # algorithm hint only for error messages; verification uses the JWK as-is
         self._jwk = data
         self._key: _oxyjwt.DecodingKey | None = None
+        self._lock = threading.Lock()
         _ = algorithm
 
     @property
     def key(self) -> _oxyjwt.DecodingKey:
         if self._key is None:
-            try:
-                self._key = _oxyjwt.DecodingKey.from_jwk(self._jwk)
-            except Exception as e:  # noqa: BLE001
-                msg = str(e) or type(e).__name__
-                raise PyJWKError(f"Unable to build key from JWK: {msg}") from e
+            with self._lock:
+                if self._key is None:
+                    try:
+                        self._key = _oxyjwt.DecodingKey.from_jwk(self._jwk)
+                    except Exception as e:  # noqa: BLE001
+                        msg = str(e) or type(e).__name__
+                        raise PyJWKError(f"Unable to build key from JWK: {msg}") from e
         return self._key
 
     @staticmethod
@@ -86,11 +90,20 @@ class PyJWKSet:
             raise PyJWKSetError("The JWK Set did not contain any keys")
         self._by_kid_raw: dict[str, dict[str, Any]] = {}
         for raw in self._raw_keys:
+            use = raw.get("use")
+            if use is not None and str(use).lower() == "enc":
+                continue
+            kid = raw.get("kid")
+            if kid is not None and str(kid) not in self._by_kid_raw:
+                self._by_kid_raw[str(kid)] = raw
+        # Fallback for kids that only have enc keys to retain proper error reporting on lookup
+        for raw in self._raw_keys:
             kid = raw.get("kid")
             if kid is not None and str(kid) not in self._by_kid_raw:
                 self._by_kid_raw[str(kid)] = raw
         self._materialized: dict[str, PyJWK] = {}
         self._keys_cache: list[PyJWK] | None = None
+        self._lock = threading.RLock()
 
     def _materialize(self, raw: dict[str, Any], index: int) -> PyJWK | None:
         try:
@@ -108,20 +121,22 @@ class PyJWKSet:
     @property
     def keys(self) -> list[PyJWK]:
         if self._keys_cache is None:
-            built: list[PyJWK] = []
-            for index, raw in enumerate(self._raw_keys):
-                jwk = self._materialize(raw, index)
-                if jwk is None:
-                    continue
-                built.append(jwk)
-                kid = jwk.key_id
-                if kid is not None:
-                    self._materialized[kid] = jwk
-            if not built:
-                raise PyJWKSetError(
-                    "The JWK Set did not contain any usable keys."
-                )
-            self._keys_cache = built
+            with self._lock:
+                if self._keys_cache is None:
+                    built: list[PyJWK] = []
+                    for index, raw in enumerate(self._raw_keys):
+                        jwk = self._materialize(raw, index)
+                        if jwk is None:
+                            continue
+                        built.append(jwk)
+                        kid = jwk.key_id
+                        if kid is not None:
+                            self._materialized[kid] = jwk
+                    if not built:
+                        raise PyJWKSetError(
+                            "The JWK Set did not contain any usable keys."
+                        )
+                    self._keys_cache = built
         return self._keys_cache
 
     @staticmethod
@@ -138,21 +153,25 @@ class PyJWKSet:
     def __getitem__(self, kid: str) -> PyJWK:
         if kid in self._materialized:
             return self._materialized[kid]
-        try:
-            raw = self._by_kid_raw[kid]
-        except KeyError as e:
-            raise KeyError(f"keyset has no key for kid: {kid!r}") from e
-        jwk = PyJWK(raw)
-        self._materialized[kid] = jwk
-        return jwk
+        with self._lock:
+            if kid in self._materialized:
+                return self._materialized[kid]
+            try:
+                raw = self._by_kid_raw[kid]
+            except KeyError as e:
+                raise KeyError(f"keyset has no key for kid: {kid!r}") from e
+            jwk = PyJWK(raw)
+            self._materialized[kid] = jwk
+            return jwk
 
     @property
     def _by_kid(self) -> dict[str, PyJWK]:
         """Materialized kid index (compat for tests and introspection)."""
-        for kid in self._by_kid_raw:
-            if kid not in self._materialized:
-                self[kid]
-        return self._materialized
+        with self._lock:
+            for kid in self._by_kid_raw:
+                if kid not in self._materialized:
+                    self[kid]
+            return dict(self._materialized)
 
 
 __all__ = ["PyJWK", "PyJWKSet"]

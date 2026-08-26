@@ -100,7 +100,7 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
             }
             if options.validate_exp
                 && exp.saturating_sub(options.reject_tokens_expiring_in_less_than)
-                    < now.saturating_sub(options.leeway)
+                    <= now.saturating_sub(options.leeway)
             {
                 return Err(new_error(ErrorKind::ExpiredSignature));
             }

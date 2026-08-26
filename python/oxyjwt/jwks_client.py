@@ -16,8 +16,9 @@ from oxyjwt import _oxyjwt
 from oxyjwt.exceptions import InvalidAlgorithmError
 from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
+from oxyjwt.warnings import InsecureJWKSUriWarning
 
-_DEFAULT_UA = "OxyJWT-PyJWKClient/0.4 (+https://github.com/QueryaHub/OxyJWT)"
+_DEFAULT_UA = "OxyJWT-PyJWKClient/0.6 (+https://github.com/QueryaHub/OxyJWT)"
 _DEFAULT_MAX_JWKS_BYTES = 256 * 1024
 
 
@@ -63,6 +64,7 @@ class PyJWKClient:
         headers: Mapping[str, Any] | None = None,
         ssl_context: ssl.SSLContext | None = None,
         lifespan: float = 300.0,
+        refresh_cooldown: float = 0.0,
     ) -> None:
         if not uri or not str(uri).strip():
             raise ValueError("uri must be a non-empty string")
@@ -72,12 +74,20 @@ class PyJWKClient:
             raise ValueError("uri must use http or https scheme")
         if require_https and parsed.scheme != "https":
             raise PyJWKClientError("JWKS uri must use https when require_https is enabled")
+        if parsed.scheme == "http":
+            import warnings
+            warnings.warn(
+                "JWKS URI is using unencrypted HTTP protocol; keys should be retrieved over HTTPS (RFC 8725 §3.10)",
+                InsecureJWKSUriWarning,
+                stacklevel=2,
+            )
         self._cache_jwk_set = bool(cache_jwk_set)
         if self._cache_jwk_set and float(lifespan) <= 0:
             raise PyJWKClientError(
                 f'lifespan must be greater than 0, the input is "{lifespan}"'
             )
         self._lifespan = float(lifespan)
+        self._refresh_cooldown = max(0.0, float(refresh_cooldown))
         self._cache_keys = bool(cache_keys)
         self._max_cached_keys = max(1, int(max_cached_keys))
         self.timeout = float(timeout)
@@ -94,7 +104,10 @@ class PyJWKClient:
         self._jwk_set: PyJWKSet | None = None
         self._jwk_set_fetched_at: float | None = None
         self._kid_lru: OrderedDict[str, PyJWK] = OrderedDict()
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
+        self._inflight_fetch: threading.Event | None = None
+        self._inflight_error: BaseException | None = None
+        self._inflight_result: PyJWKSet | None = None
 
     def _jwk_set_cache_valid(self) -> bool:
         if self._jwk_set is None or self._jwk_set_fetched_at is None:
@@ -116,48 +129,91 @@ class PyJWKClient:
             raise PyJWKClientConnectionError(str(e) or type(e).__name__) from e
 
     def _load_jwk_set(self, refresh: bool) -> PyJWKSet:
-        if self._cache_jwk_set and not refresh and self._jwk_set_cache_valid():
-            return self._jwk_set  # type: ignore[return-value]
-        data = self._fetch_raw()
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                if not refresh and self._cache_jwk_set and self._jwk_set_cache_valid():
+                    return self._jwk_set  # type: ignore[return-value]
+                if (
+                    refresh
+                    and self._jwk_set is not None
+                    and self._jwk_set_fetched_at is not None
+                    and (now - self._jwk_set_fetched_at) < self._refresh_cooldown
+                ):
+                    return self._jwk_set
+
+                event = self._inflight_fetch
+                if event is not None:
+                    # Inflight fetch already running, wait on it as follower
+                    pass
+                else:
+                    event = threading.Event()
+                    self._inflight_fetch = event
+                    self._inflight_error = None
+                    self._inflight_result = None
+                    break
+
+            # Wait for leader outside lock
+            event.wait()
+            with self._lock:
+                if self._inflight_error is not None:
+                    raise self._inflight_error
+                if self._inflight_result is not None:
+                    return self._inflight_result
+                refresh = False
+
+        # Leader executes network I/O without holding lock
         try:
-            obj: dict[str, Any] = orjson.loads(data)
-        except orjson.JSONDecodeError as e:
-            raise PyJWKClientError("JWKS response is not valid JSON") from e
-        if not isinstance(obj, dict) or "keys" not in obj:
-            raise PyJWKClientError(
-                "JWKS response must be a JSON object with a 'keys' field"
-            )
-        jwks = PyJWKSet.from_dict(obj)
-        self._kid_lru.clear()
-        if self._cache_jwk_set:
-            self._jwk_set = jwks
-            self._jwk_set_fetched_at = time.monotonic()
-        return jwks
+            data = self._fetch_raw()
+            try:
+                obj: dict[str, Any] = orjson.loads(data)
+            except orjson.JSONDecodeError as e:
+                raise PyJWKClientError("JWKS response is not valid JSON") from e
+            if not isinstance(obj, dict) or "keys" not in obj:
+                raise PyJWKClientError(
+                    "JWKS response must be a JSON object with a 'keys' field"
+                )
+            jwks = PyJWKSet.from_dict(obj)
+            with self._lock:
+                self._kid_lru.clear()
+                if self._cache_jwk_set:
+                    self._jwk_set = jwks
+                    self._jwk_set_fetched_at = time.monotonic()
+                self._inflight_result = jwks
+                return jwks
+        except BaseException as err:
+            with self._lock:
+                self._inflight_error = err
+            raise
+        finally:
+            with self._lock:
+                self._inflight_fetch = None
+                event.set()
 
     def get_jwk_set(self, refresh: bool = False) -> PyJWKSet:
-        with self._lock:
-            return self._load_jwk_set(refresh)
+        return self._load_jwk_set(refresh)
 
     def get_signing_key(self, kid: str) -> PyJWK:
         if not kid:
             raise PyJWKClientError("kid must be a non-empty string")
-        with self._lock:
-            if self._cache_keys:
+        if self._cache_keys:
+            with self._lock:
                 cached = self._kid_lru.get(kid)
                 if cached is not None:
                     self._kid_lru.move_to_end(kid)
                     return cached
-            jwks = self._load_jwk_set(refresh=False)
-            try:
-                jwk = jwks[kid]
-            except KeyError:
-                jwks = self._load_jwk_set(refresh=True)
-                jwk = jwks[kid]
-            if self._cache_keys:
+        jwks = self.get_jwk_set(refresh=False)
+        try:
+            jwk = jwks[kid]
+        except KeyError:
+            jwks = self.get_jwk_set(refresh=True)
+            jwk = jwks[kid]
+        if self._cache_keys:
+            with self._lock:
                 self._kid_lru[kid] = jwk
                 while len(self._kid_lru) > self._max_cached_keys:
                     self._kid_lru.popitem(last=False)
-            return jwk
+        return jwk
 
     def get_signing_key_from_jwt(
         self,

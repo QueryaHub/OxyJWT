@@ -345,21 +345,30 @@ fn custom_header_string(name: &str, value: &Value) -> PyResult<String> {
     })
 }
 
-fn parse_payload_json(payload_json: &Bound<'_, PyAny>) -> PyResult<Value> {
-    if let Ok(bytes) = payload_json.extract::<&[u8]>() {
-        return serde_json::from_slice(bytes)
-            .map_err(|e| errors::encode_error(format!("payload_json must be a JSON object: {e}")));
+fn extract_payload_object_bytes<'a>(payload_json: &'a Bound<'_, PyAny>) -> PyResult<&'a [u8]> {
+    let bytes = if let Ok(b) = payload_json.extract::<&'a [u8]>() {
+        b
+    } else if let Ok(s) = payload_json.extract::<&'a str>() {
+        s.as_bytes()
+    } else {
+        return Err(errors::encode_error(
+            "payload_json must be a UTF-8 str or bytes containing a JSON object",
+        ));
+    };
+
+    let first = bytes.iter().find(|b| !b.is_ascii_whitespace());
+    let last = bytes.iter().rfind(|b| !b.is_ascii_whitespace());
+
+    if first != Some(&b'{') || last != Some(&b'}') {
+        return Err(errors::encode_error(
+            "Expecting a dict object, as JWT only supports JSON objects as payloads.",
+        ));
     }
-    if let Ok(text) = payload_json.extract::<&str>() {
-        return serde_json::from_str(text)
-            .map_err(|e| errors::encode_error(format!("payload_json must be a JSON object: {e}")));
-    }
-    Err(errors::encode_error(
-        "payload_json must be a UTF-8 str or bytes containing a JSON object",
-    ))
+
+    Ok(bytes)
 }
 
-/// Encode a JWT from an already-serialized JSON object (str or bytes from Python).
+/// Encode a JWT from an already-serialized JSON object (str or bytes from Python) without DOM tree allocation.
 #[pyfunction]
 #[pyo3(signature = (payload_json, key, algorithm = "HS256", headers = None))]
 pub fn encode_json(
@@ -369,17 +378,29 @@ pub fn encode_json(
     algorithm: &str,
     headers: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<String> {
-    let claims = parse_payload_json(payload_json)?;
-    if !claims.is_object() {
-        return Err(errors::encode_error(
-            "Expecting a dict object, as JWT only supports JSON objects as payloads.",
-        ));
-    }
+    let payload_bytes = extract_payload_object_bytes(payload_json)?;
     let algorithm = parse_algorithm(algorithm)?;
     let mut header = Header::new(algorithm);
     apply_headers(&mut header, headers, algorithm)?;
     let encoding_key = encoding_key_from_py(key, algorithm)?;
 
-    py.detach(|| jwt_encode(&header, &claims, &encoding_key))
-        .map_err(errors::from_jwt_encode_error)
+    let header_json = serde_json::to_vec(&header)
+        .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+
+    let payload_owned = payload_bytes.to_vec();
+
+    py.detach(move || {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+
+        let header_b64 = URL_SAFE_NO_PAD.encode(&header_json);
+        let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_owned);
+        let signing_input = format!("{header_b64}.{payload_b64}");
+
+        let signature =
+            jsonwebtoken::crypto::sign(signing_input.as_bytes(), &encoding_key, algorithm)
+                .map_err(errors::from_jwt_encode_error)?;
+
+        Ok(format!("{signing_input}.{signature}"))
+    })
 }

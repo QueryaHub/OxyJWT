@@ -21,6 +21,7 @@ from oxyjwt.exceptions import (
     InvalidIssuedAtError,
     InvalidIssuerError,
     InvalidSubjectError,
+    InvalidTokenError,
     MissingRequiredClaimError,
 )
 from oxyjwt.warnings import InsecureDecodeWarning, RemovedInPyJWT3Warning
@@ -154,6 +155,7 @@ class PyJWT:
         subject: str | None = None,
         issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
+        typ: str | None = None,
         **kwargs: Any,
     ) -> Any:
         if kwargs:
@@ -175,6 +177,7 @@ class PyJWT:
             subject=subject,
             issuer=issuer,
             leeway=leeway,
+            typ=typ,
         )["payload"]
 
     def decode_complete(
@@ -183,19 +186,20 @@ class PyJWT:
         key: object = "",
         algorithms: list[str] | None = None,
         options: dict[str, Any] | None = None,
+        *,
         verify: bool | None = None,
         detached_payload: bytes | None = None,
         audience: str | Iterable[str] | None = None,
-        subject: str | None = None,
         issuer: str | Iterable[str] | None = None,
+        subject: str | None = None,
         leeway: float | timedelta = 0,
+        typ: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         if kwargs:
+            first = next(iter(kwargs))
             warnings.warn(
-                "passing additional kwargs to decode_complete() is deprecated "
-                "and will be removed in pyjwt version 3. "
-                f"Unsupported kwargs: {tuple(kwargs.keys())}",
+                f"passing {first!r} to decode() is deprecated and will be removed in PyJWT 3.0.0",
                 RemovedInPyJWT3Warning,
                 stacklevel=2,
             )
@@ -207,6 +211,9 @@ class PyJWT:
         # Match PyJWT: JWS/algorithm gating uses call-only `options` + setdefault, then merge for claims
         co: dict[str, Any] = dict(options or {})
         co.setdefault("verify_signature", True)
+        if typ is not None:
+            co["typ"] = typ
+            co["verify_typ"] = True
         if verify is not None and verify != co["verify_signature"]:
             warnings.warn(
                 "The `verify` argument to `decode` does nothing in PyJWT 2.0 and newer. "
@@ -278,23 +285,35 @@ class PyJWT:
             _s, header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
             header = _as_plain_dict(header_obj)
             if detached_payload is not None:
-                pl_d = _as_plain_dict(orjson.loads(bytes(detached_payload)))
-            else:
-                pl_d = _as_plain_dict(orjson.loads(bytes(pld_bytes)))
+                pld_bytes = bytes(detached_payload)
+            pl_out = _as_plain_dict(
+                orjson.loads(pld_bytes)
+                if pld_bytes
+                else {}
+            )
+            self._validate_headers(header, merged)
             self._validate_claims(
-                pl_d, merged, audience, issuer, subject, lwf
+                pl_out,
+                merged,
+                audience,
+                issuer,
+                subject,
+                lwf,
+                rust_time_claims=False,
+                rust_standard_claims=False,
             )
             return {
-                "payload": pl_d,
+                "payload": pl_out,
                 "header": header,
                 "signature": _sig_as_bytes(sigb),
             }
         assert algorithms is not None
-        req = [str(x) for x in (merged.get("require") or []) if x is not None]
+        req = merged.get("require", [])
+        if req is not None and not isinstance(req, (list, tuple)):
+            req = list(req)
         whole_leeway = _leeway_is_whole_seconds(lwf)
-        rust_options = merged
+        rust_options: dict[str, Any] = dict(merged)
         if not whole_leeway:
-            rust_options = dict(merged)
             if merged.get("verify_exp", True):
                 rust_options["verify_exp"] = False
             if merged.get("verify_nbf", True):
@@ -315,6 +334,7 @@ class PyJWT:
         )
         header = _as_plain_dict(header_obj)
         pl_out = _as_plain_dict(dec)
+        self._validate_headers(header, merged)
         self._validate_claims(
             pl_out,
             merged,
@@ -360,8 +380,8 @@ class PyJWT:
         if not rust_time_claims:
             if "nbf" in payload and options.get("verify_nbf", True):
                 self._validate_nbf_fields(payload, now, leeway)
-            if "exp" in payload and options.get("verify_exp", True):
-                self._validate_exp_fields(payload, now, leeway)
+        if "exp" in payload and options.get("verify_exp", True):
+            self._validate_exp_fields(payload, now, leeway)
         strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
             if strict_aud or not (
@@ -482,6 +502,22 @@ class PyJWT:
         auds = [audience] if isinstance(audience, str) else list(audience)
         if all(a not in audience_claims for a in auds):
             raise InvalidAudienceError("Audience doesn't match")
+
+    @staticmethod
+    def _validate_headers(
+        header: dict[str, Any], options: dict[str, Any]
+    ) -> None:
+        if options.get("verify_typ", False) or "typ" in options:
+            expected_typ = options.get("typ")
+            actual_typ = header.get("typ")
+            if expected_typ is not None:
+                if actual_typ is None or str(actual_typ).lower() != str(expected_typ).lower():
+                    raise InvalidTokenError(
+                        f"Invalid token type: expected {expected_typ!r}, got {actual_typ!r}"
+                    )
+            elif actual_typ is None:
+                raise InvalidTokenError("Header is missing 'typ' parameter")
+
 
 _jwt = PyJWT()
 encode = _jwt.encode

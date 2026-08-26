@@ -179,3 +179,46 @@ def test_pyjwkset_valid_keys_load_without_warning() -> None:
         warnings.simplefilter("error", oxyjwt.PyJWKSetSkipWarning)
         s = PyJWKSet.from_dict({"keys": [jw]})
     assert len(s.keys) == 1
+
+
+def test_pyjwkset_duplicate_kid_enc_before_sig() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    enc_jwk = {"kty": "oct", "k": k, "kid": "k1", "use": "enc"}
+    sig_jwk = {"kty": "oct", "k": k, "kid": "k1", "use": "sig"}
+    s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
+    # Directly looking up k1 should return the signing key, not fail on enc key
+    jwk = s["k1"]
+    assert jwk.key_id == "k1"
+    assert jwk.public_key_use == "sig"
+    assert jwk.key is not None
+
+
+def test_pyjwk_and_pyjwkset_concurrent_materialization() -> None:
+    import threading
+
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    raw_keys = [{"kty": "oct", "k": k, "kid": f"k{i}"} for i in range(10)]
+    s = PyJWKSet.from_dict({"keys": raw_keys})
+
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            for i in range(10):
+                jwk = s[f"k{i}"]
+                assert jwk.key is not None
+            assert len(s.keys) == 10
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+
+

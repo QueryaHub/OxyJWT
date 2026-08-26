@@ -26,6 +26,14 @@ def test_expired_token_raises_specific_error() -> None:
         oxyjwt.decode(token, "secret", algorithms=["HS256"])
 
 
+def test_exact_exp_now_is_expired() -> None:
+    # An exp claim equal to now (0 seconds remaining) is considered expired
+    token = oxyjwt.encode({"exp": int(time.time())}, "secret")
+    with pytest.raises(oxyjwt.ExpiredSignatureError):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"])
+
+
+
 def test_immature_token_raises_specific_error() -> None:
     token = oxyjwt.encode(
         {"exp": int(time.time()) + 3600, "nbf": int(time.time()) + 3600},
@@ -363,3 +371,22 @@ def test_unverified_decode_warns_on_require() -> None:
         "require" in str(w.message) and "presence" in str(w.message)
         for w in records.list
     )
+
+
+def test_explicit_typ_validation_success() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret", headers={"typ": "JWT"})
+    out = oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="JWT", options={"verify_exp": False})
+    assert out["sub"] == "user"
+
+
+def test_explicit_typ_validation_mismatch_raises() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret", headers={"typ": "access+jwt"})
+    with pytest.raises(oxyjwt.InvalidTokenError, match="Invalid token type"):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="id+jwt", options={"verify_exp": False})
+
+
+def test_explicit_typ_validation_missing_raises_when_required() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret")
+    with pytest.raises(oxyjwt.InvalidTokenError, match="Invalid token type"):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="access+jwt", options={"verify_exp": False})
+

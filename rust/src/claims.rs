@@ -17,7 +17,19 @@ pub fn json_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
     json_to_bound(py, value).map(|value| value.unbind())
 }
 
-fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+const MAX_RECURSION_DEPTH: usize = 128;
+
+pub fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<Value> {
+    py_to_json_depth(value, 0)
+}
+
+fn py_to_json_depth(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
+    if depth > MAX_RECURSION_DEPTH {
+        return Err(errors::invalid_token(
+            "maximum recursion depth exceeded during claims serialization",
+        ));
+    }
+
     if value.is_none() {
         return Ok(Value::Null);
     }
@@ -57,7 +69,7 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<Value> {
                 .map_err(|_| errors::invalid_token("JSON object keys must be strings"))?
                 .to_str()?
                 .to_owned();
-            object.insert(key, py_to_json(&value)?);
+            object.insert(key, py_to_json_depth(&value, depth + 1)?);
         }
         return Ok(Value::Object(object));
     }
@@ -65,7 +77,7 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if let Ok(list) = value.cast::<PyList>() {
         return list
             .iter()
-            .map(|item| py_to_json(&item))
+            .map(|item| py_to_json_depth(&item, depth + 1))
             .collect::<PyResult<Vec<_>>>()
             .map(Value::Array);
     }
@@ -73,7 +85,7 @@ fn py_to_json(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     if let Ok(tuple) = value.cast::<PyTuple>() {
         return tuple
             .iter()
-            .map(|item| py_to_json(&item))
+            .map(|item| py_to_json_depth(&item, depth + 1))
             .collect::<PyResult<Vec<_>>>()
             .map(Value::Array);
     }
@@ -100,10 +112,11 @@ fn json_to_bound<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyA
         }
         Value::String(value) => Ok(value.into_pyobject(py)?.into_any()),
         Value::Array(values) => {
-            let list = PyList::empty(py);
-            for value in values {
-                list.append(json_to_bound(py, value)?)?;
-            }
+            let elements = values
+                .iter()
+                .map(|value| json_to_bound(py, value))
+                .collect::<PyResult<Vec<_>>>()?;
+            let list = PyList::new(py, elements)?;
             Ok(list.into_any())
         }
         Value::Object(values) => {
