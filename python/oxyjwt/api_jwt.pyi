@@ -32,6 +32,7 @@ class PyJWT:
         subject: str | None = None,
         issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
+        typ: str | None = None,
         **kwargs: Any,
     ) -> Any: ...
     def decode_complete(
@@ -46,6 +47,7 @@ class PyJWT:
         subject: str | None = None,
         issuer: str | Iterable[str] | None = None,
         leeway: float | timedelta = 0,
+        typ: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]: ...
 
@@ -68,6 +70,7 @@ def decode(
     subject: str | None = None,
     issuer: str | Iterable[str] | None = None,
     leeway: float | timedelta = 0,
+    typ: str | None = None,
     **kwargs: Any,
 ) -> Any: ...
 def decode_complete(
@@ -81,5 +84,7 @@ def decode_complete(
     subject: str | None = None,
     issuer: str | Iterable[str] | None = None,
     leeway: float | timedelta = 0,
+    typ: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]: ...
+
