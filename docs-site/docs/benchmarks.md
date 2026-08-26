@@ -16,8 +16,8 @@ Measured on a typical Linux dev machine with `maturin develop --release`, 50 ite
 
 | Operation | OxyJWT (ops/s) | PyJWT (ops/s) | OxyJWT / PyJWT |
 |-----------|----------------|---------------|----------------|
-| encode | ~400k+ | ~130k+ | ~3× |
-| decode | ~160k+ | ~115k+ | ~1.4× |
+| encode | ~700k+ | ~175k+ | ~4× |
+| decode | ~450k+ | ~140k+ | ~3× |
 
 CI asserts **≥75%** of PyJWT (median ops/s across rounds) for both operations so large regressions fail without requiring absolute ops/s parity across runners.
 

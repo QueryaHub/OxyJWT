@@ -6,6 +6,14 @@ use jsonwebtoken::errors::{new_error, Error, ErrorKind};
 use jsonwebtoken::{get_current_timestamp, Validation};
 use serde_json::Value;
 
+/// Spec claims that `required_spec_claims` can hold, in a fixed order.
+///
+/// `Validation::required_spec_claims` is a `HashSet`, so iterating it directly
+/// makes the reported missing claim depend on hash seeding and therefore differ
+/// between processes. Walking a constant list instead keeps the error stable and
+/// skips the set iteration when nothing is required.
+const REQUIRABLE_SPEC_CLAIMS: [&str; 5] = ["aud", "exp", "iss", "nbf", "sub"];
+
 enum NumericClaim {
     Missing,
     Invalid,
@@ -60,17 +68,20 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
         return Err(new_error(ErrorKind::InvalidToken));
     }
 
-    for required in &options.required_spec_claims {
-        let present = match required.as_str() {
-            "exp" | "nbf" => !matches!(
-                parse_numeric_claim(claims.get(required)),
-                NumericClaim::Missing
-            ),
-            "sub" | "iss" | "aud" => claims.get(required).is_some(),
-            _ => continue,
-        };
-        if !present {
-            return Err(new_error(ErrorKind::MissingRequiredClaim(required.clone())));
+    if !options.required_spec_claims.is_empty() {
+        for required in REQUIRABLE_SPEC_CLAIMS {
+            if !options.required_spec_claims.contains(required) {
+                continue;
+            }
+            // A JSON null counts as absent, matching `_validate_required` on the
+            // Python side and PyJWT's `payload.get(claim) is None` rule. A
+            // present but malformed value is reported by the format checks
+            // below instead.
+            if !matches!(claims.get(required), Some(value) if !value.is_null()) {
+                return Err(new_error(ErrorKind::MissingRequiredClaim(
+                    required.to_owned(),
+                )));
+            }
         }
     }
 

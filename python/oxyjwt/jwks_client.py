@@ -18,7 +18,7 @@ from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
 from oxyjwt.warnings import InsecureJWKSUriWarning
 
-_DEFAULT_UA = "OxyJWT-PyJWKClient/0.6 (+https://github.com/QueryaHub/OxyJWT)"
+_DEFAULT_UA = "OxyJWT-PyJWKClient/0.7 (+https://github.com/QueryaHub/OxyJWT)"
 _DEFAULT_MAX_JWKS_BYTES = 256 * 1024
 
 

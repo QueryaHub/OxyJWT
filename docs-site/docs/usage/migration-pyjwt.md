@@ -16,6 +16,6 @@ If you previously caught `OxyJWTError` for signature failures, you may need to c
 
 - **Detached payloads** (RFC 7797, `b64: false` in the protected header): pass the raw payload bytes as `detached_payload` to `decode` / `decode_complete`, matching PyJWT.
 - **Plugin / `register_algorithm` workflows** (full `PyJWS` plugin model) are not a goal of v1; use the supported algorithm set from the Rust `jsonwebtoken` stack.
-- **`sort_headers`**: for encoding, the boolean applies to **JSON** serialization of the payload (stable key order via **orjson** with sorted keys); header handling follows the same rules as the Rust `encode` path for supported header fields.
+- **`sort_headers`**: accepted for compatibility, but it does not change the token OxyJWT emits. Claims are always serialized with sorted keys (via **orjson**), and header fields always follow the Rust `encode` path's fixed order. Do not rely on this flag to reproduce a PyJWT token byte-for-byte; if you need identical bytes, compare the decoded claims instead.
 
 For behavior questions, run the test suite or compare a specific call with `import jwt` and `import oxyjwt` on the same inputs (tests under `tests/` include parity-style checks when PyJWT is installed).

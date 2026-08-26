@@ -1,6 +1,6 @@
 [package]
 name = "oxyjwt"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -19,7 +19,14 @@ aws_lc_rs = ["jsonwebtoken/aws_lc_rs"]
 base64 = "0.22"
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
 pyo3 = { version = "0.28", features = ["abi3-py310"] }
-serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 zeroize = "1"
+
+# Release wheels are built once and then run in a hot path, so trade build time
+# for codegen quality. `panic = "abort"` is deliberately not set: PyO3 unwinds
+# across the extension boundary to turn Rust panics into Python exceptions.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

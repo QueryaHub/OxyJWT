@@ -4,6 +4,78 @@
 
 (No changes yet.)
 
+## 0.7.0 — 2026-08-26
+
+Performance release. Verified `decode` is about **2.3× faster** and `encode` about
+**1.2× faster** than 0.6.0 on the HS256 hot path, with no change to any successful
+decode or encode result. Measured locally with CPython 3.14 on Linux/x86-64;
+absolute numbers vary by machine. The API remains pre-1.0 (Beta). See
+[Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
+### Upgrading from 0.6.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface.
+- One edge-case behaviour change: a **present but unparseable** claim listed in
+  `options["require"]` (for example `{"exp": "not-a-number"}`) now raises
+  `DecodeError` instead of `MissingRequiredClaimError`, matching PyJWT.
+- Absent and JSON `null` required claims still raise `MissingRequiredClaimError`.
+
+| Operation | 0.6.0 | 0.7.0 | Change |
+| --- | --- | --- | --- |
+| `decode` | 6.08 µs | 2.64 µs | 2.30× faster |
+| `decode_complete` | 5.90 µs | 2.98 µs | 1.98× faster |
+| `decode` (large claims) | 15.18 µs | 9.60 µs | 1.58× faster |
+| `decode` (`audience` + `issuer`) | 7.12 µs | 5.50 µs | 1.29× faster |
+| `encode` | 1.68 µs | 1.44 µs | 1.17× faster |
+
+### Changed
+
+- **Single-pass verified decode.** The native decode path now parses the header
+  once, parses the payload once and verifies the signature once. Previously the
+  underlying `jsonwebtoken::decode` parsed both segments a second time for its
+  internal validation struct, and the returned header had to be re-serialized
+  before it could be handed to Python.
+- **Fast path for plain `decode` / `decode_complete`.** When nothing but
+  `algorithms` is supplied, the options dictionary is no longer built, copied or
+  re-read on either side of the FFI boundary, and Python runs only the claim
+  checks that Rust does not already cover. Calls that pass `options`,
+  `audience`, `issuer`, `subject`, a non-zero `leeway`, `typ` or
+  `detached_payload`, or that use a `PyJWT` instance with non-default options,
+  behave exactly as before.
+- **Release profile.** Wheels are now built with fat LTO, a single codegen unit
+  and stripped symbols.
+- RFC 7797 detached-JWS decoding no longer selects its exception type by matching
+  on error message text.
+- Header parse failures now report the same message as `get_unverified_header`
+  for the same token. The exception classes are unchanged.
+
+### Fixed
+
+- **`MissingRequiredClaimError` now names a deterministic claim.** When several
+  claims listed in `options["require"]` were absent, the one reported differed
+  between processes.
+- **`options["require"]` treats a JSON `null` as an absent claim**, matching
+  PyJWT.
+- `encode` no longer copies the payload when no `datetime` claim needs
+  rewriting, and never mutates the caller's dictionary.
+
+### Behaviour change
+
+- A claim listed in `options["require"]` that is **present but unparseable** (for
+  example `{"exp": "not-a-number"}` with `require=["exp"]`) now raises
+  `DecodeError` instead of `MissingRequiredClaimError`, matching PyJWT. Absent and
+  `null` claims continue to raise `MissingRequiredClaimError`.
+
+### Notes
+
+- `sort_headers` on `encode` has never affected the emitted token: claim keys are
+  serialized in sorted order either way. The flag is still accepted for PyJWT
+  compatibility.
+
 ## 0.6.0 — 2026-08-26
 
 Security, JWKS hardening, and performance release: RFC 8725 token-type validation, JWKS refresh throttling, stricter RFC 7797 `crit` handling, thread-safe JWK materialization, and encode/decode hot-path improvements. The API remains pre-1.0 (Beta). See [Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
