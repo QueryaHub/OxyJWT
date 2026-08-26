@@ -371,3 +371,22 @@ def test_unverified_decode_warns_on_require() -> None:
         "require" in str(w.message) and "presence" in str(w.message)
         for w in records.list
     )
+
+
+def test_explicit_typ_validation_success() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret", headers={"typ": "JWT"})
+    out = oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="JWT", options={"verify_exp": False})
+    assert out["sub"] == "user"
+
+
+def test_explicit_typ_validation_mismatch_raises() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret", headers={"typ": "access+jwt"})
+    with pytest.raises(oxyjwt.InvalidTokenError, match="Invalid token type"):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="id+jwt", options={"verify_exp": False})
+
+
+def test_explicit_typ_validation_missing_raises_when_required() -> None:
+    token = oxyjwt.encode({"sub": "user"}, "secret")
+    with pytest.raises(oxyjwt.InvalidTokenError, match="Invalid token type"):
+        oxyjwt.decode(token, "secret", algorithms=["HS256"], typ="access+jwt", options={"verify_exp": False})
+

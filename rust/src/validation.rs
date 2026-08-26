@@ -36,6 +36,7 @@ pub fn build_validation(
     validation.leeway = leeway_as_u64(leeway);
     validation.validate_exp = option_bool(options, "verify_exp", true)?;
     validation.validate_nbf = option_bool(options, "verify_nbf", true)?;
+    validation.required_spec_claims.clear();
 
     if option_bool(options, "require_exp", false)? {
         validation.required_spec_claims.insert("exp".to_owned());
