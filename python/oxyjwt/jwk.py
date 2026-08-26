@@ -86,6 +86,14 @@ class PyJWKSet:
             raise PyJWKSetError("The JWK Set did not contain any keys")
         self._by_kid_raw: dict[str, dict[str, Any]] = {}
         for raw in self._raw_keys:
+            use = raw.get("use")
+            if use is not None and str(use).lower() == "enc":
+                continue
+            kid = raw.get("kid")
+            if kid is not None and str(kid) not in self._by_kid_raw:
+                self._by_kid_raw[str(kid)] = raw
+        # Fallback for kids that only have enc keys to retain proper error reporting on lookup
+        for raw in self._raw_keys:
             kid = raw.get("kid")
             if kid is not None and str(kid) not in self._by_kid_raw:
                 self._by_kid_raw[str(kid)] = raw

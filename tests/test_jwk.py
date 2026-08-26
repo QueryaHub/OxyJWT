@@ -179,3 +179,17 @@ def test_pyjwkset_valid_keys_load_without_warning() -> None:
         warnings.simplefilter("error", oxyjwt.PyJWKSetSkipWarning)
         s = PyJWKSet.from_dict({"keys": [jw]})
     assert len(s.keys) == 1
+
+
+def test_pyjwkset_duplicate_kid_enc_before_sig() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    enc_jwk = {"kty": "oct", "k": k, "kid": "k1", "use": "enc"}
+    sig_jwk = {"kty": "oct", "k": k, "kid": "k1", "use": "sig"}
+    s = PyJWKSet.from_dict({"keys": [enc_jwk, sig_jwk]})
+    # Directly looking up k1 should return the signing key, not fail on enc key
+    jwk = s["k1"]
+    assert jwk.key_id == "k1"
+    assert jwk.public_key_use == "sig"
+    assert jwk.key is not None
+
