@@ -131,7 +131,8 @@ pub fn signing_input_rfc7797(header_segment: &str, payload: &[u8]) -> Vec<u8> {
 /// Returns `(signing_input bytes, header JSON object, raw payload bytes, signature bytes)`.
 pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
     let (h, p, s) = split_compact_segments(token)?;
-    let signing_input = format!("{h}.{p}").into_bytes();
+    let signing_input_len = h.len().saturating_add(1).saturating_add(p.len());
+    let signing_input = token.as_bytes()[..signing_input_len].to_vec();
     let header = decode_header_json(h)?;
     let payload_bytes = URL_SAFE_NO_PAD.decode(p).map_err(|e| e.to_string())?;
     let signature_bytes = URL_SAFE_NO_PAD.decode(s).map_err(|e| e.to_string())?;
