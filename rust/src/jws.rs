@@ -78,7 +78,26 @@ pub fn validate_rfc7797_header(header: &Value) -> Result<(), String> {
         .ok_or_else(|| {
             "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string()
         })?;
-    if !crit.iter().any(|v| v.as_str() == Some("b64")) {
+    if crit.is_empty() {
+        return Err(
+            "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string(),
+        );
+    }
+    let mut has_b64 = false;
+    for param in crit {
+        let Some(param_str) = param.as_str() else {
+            return Err("Items in 'crit' header must be strings".to_string());
+        };
+        match param_str {
+            "b64" => has_b64 = true,
+            other => {
+                return Err(format!(
+                    "Unsupported critical header parameter in 'crit': '{other}'"
+                ))
+            }
+        }
+    }
+    if !has_b64 {
         return Err(
             "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string(),
         );
