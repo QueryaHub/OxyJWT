@@ -16,6 +16,7 @@ from oxyjwt import _oxyjwt
 from oxyjwt.exceptions import InvalidAlgorithmError
 from oxyjwt.jwk import PyJWK, PyJWKSet
 from oxyjwt.jwk_exc import PyJWKClientConnectionError, PyJWKClientError
+from oxyjwt.warnings import InsecureJWKSUriWarning
 
 _DEFAULT_UA = "OxyJWT-PyJWKClient/0.4 (+https://github.com/QueryaHub/OxyJWT)"
 _DEFAULT_MAX_JWKS_BYTES = 256 * 1024
@@ -73,6 +74,13 @@ class PyJWKClient:
             raise ValueError("uri must use http or https scheme")
         if require_https and parsed.scheme != "https":
             raise PyJWKClientError("JWKS uri must use https when require_https is enabled")
+        if parsed.scheme == "http":
+            import warnings
+            warnings.warn(
+                "JWKS URI is using unencrypted HTTP protocol; keys should be retrieved over HTTPS (RFC 8725 §3.10)",
+                InsecureJWKSUriWarning,
+                stacklevel=2,
+            )
         self._cache_jwk_set = bool(cache_jwk_set)
         if self._cache_jwk_set and float(lifespan) <= 0:
             raise PyJWKClientError(
