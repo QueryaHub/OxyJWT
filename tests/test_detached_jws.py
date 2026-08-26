@@ -82,3 +82,20 @@ def test_get_unverified_header_rfc7797() -> None:
     header = oxyjwt.get_unverified_header(token)
     assert header["alg"] == "HS256"
     assert header["b64"] is False
+
+
+def test_detached_rejects_unsupported_crit_parameter() -> None:
+    body = json.dumps({"sub": "u", "exp": 9_999_999_999}).encode()
+    jws = PyJWS()
+    token = jws.encode(
+        body,
+        b"secret",
+        algorithm="HS256",
+        headers={"b64": False, "crit": ["b64", "unsupported_extension"]},
+        is_payload_detached=True,
+    )
+    with pytest.raises(oxyjwt.InvalidTokenError, match="Unsupported critical header"):
+        oxyjwt.decode(
+            token, "secret", algorithms=["HS256"], detached_payload=body
+        )
+
