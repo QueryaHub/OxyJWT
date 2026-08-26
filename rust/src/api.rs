@@ -397,8 +397,9 @@ pub fn encode_json(
         let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_owned);
         let signing_input = format!("{header_b64}.{payload_b64}");
 
-        let signature = jsonwebtoken::crypto::sign(signing_input.as_bytes(), &encoding_key, algorithm)
-            .map_err(errors::from_jwt_encode_error)?;
+        let signature =
+            jsonwebtoken::crypto::sign(signing_input.as_bytes(), &encoding_key, algorithm)
+                .map_err(errors::from_jwt_encode_error)?;
 
         Ok(format!("{signing_input}.{signature}"))
     })
