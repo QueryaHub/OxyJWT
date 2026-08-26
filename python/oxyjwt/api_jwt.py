@@ -360,8 +360,8 @@ class PyJWT:
         if not rust_time_claims:
             if "nbf" in payload and options.get("verify_nbf", True):
                 self._validate_nbf_fields(payload, now, leeway)
-            if "exp" in payload and options.get("verify_exp", True):
-                self._validate_exp_fields(payload, now, leeway)
+        if "exp" in payload and options.get("verify_exp", True):
+            self._validate_exp_fields(payload, now, leeway)
         strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
             if strict_aud or not (
