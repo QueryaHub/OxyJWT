@@ -100,10 +100,11 @@ fn json_to_bound<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyA
         }
         Value::String(value) => Ok(value.into_pyobject(py)?.into_any()),
         Value::Array(values) => {
-            let list = PyList::empty(py);
-            for value in values {
-                list.append(json_to_bound(py, value)?)?;
-            }
+            let elements = values
+                .iter()
+                .map(|value| json_to_bound(py, value))
+                .collect::<PyResult<Vec<_>>>()?;
+            let list = PyList::new(py, elements)?;
             Ok(list.into_any())
         }
         Value::Object(values) => {
