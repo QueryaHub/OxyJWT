@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "oxyjwt"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Python JWT library powered by a Rust core."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,6 +55,7 @@ docs = [
 
 [project.urls]
 Repository = "https://github.com/QueryaHub/OxyJWT"
+Changelog = "https://github.com/QueryaHub/OxyJWT/blob/main/CHANGELOG.md"
 
 [tool.mypy]
 python_version = "3.10"

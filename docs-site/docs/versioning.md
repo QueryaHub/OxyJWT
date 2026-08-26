@@ -23,7 +23,7 @@ Typical **major** (breaking) changes include:
 
 Releases `0.x` are pre-1.0. Minor bumps in `0.x` may include small API adjustments while PyJWT parity hardens. After **1.0.0**, breaking changes are reserved for major versions.
 
-The PyPI `Development Status` classifier tracks maturity (Beta on the `0.5.x` line; **Stable** is planned for `1.0.0`).
+The PyPI `Development Status` classifier tracks maturity (Beta on the `0.6.x` line; **Stable** is planned for `1.0.0`).
 
 ## Rust crate version
 

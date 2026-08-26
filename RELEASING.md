@@ -1,6 +1,6 @@
 # Releasing OxyJWT
 
-This checklist is for maintainers publishing **0.5.x** (and later) to PyPI via the GitHub Actions [Release workflow](.github/workflows/release.yml).
+This checklist is for maintainers publishing **0.6.x** (and later) to PyPI via the GitHub Actions [Release workflow](.github/workflows/release.yml).
 
 ## Before tagging
 
@@ -8,7 +8,7 @@ This checklist is for maintainers publishing **0.5.x** (and later) to PyPI via t
    - `pyproject.toml` → `[project].version`
    - `rust/Cargo.toml` → `[package].version`
    - `python/oxyjwt/__init__.py` → `__version__`
-2. **Changelog** — update [`docs-site/docs/changelog.md`](docs-site/docs/changelog.md) (section for the release; add release date when publishing).
+2. **Changelog** — update [`CHANGELOG.md`](CHANGELOG.md) and [`docs-site/docs/changelog.md`](docs-site/docs/changelog.md) (section for the release; add release date when publishing).
 3. **Tests** (from repo root):
 
    ```bash
@@ -41,16 +41,16 @@ This checklist is for maintainers publishing **0.5.x** (and later) to PyPI via t
 ## Publish
 
 1. Commit all release-prep changes on `main`.
-2. Merge `dev` → `main`, then create and push an annotated tag (example for **0.5.0**):
+2. Merge `dev` → `main`, then create and push an annotated tag (example for **0.6.0**):
 
    ```bash
-   git tag -a v0.5.0 -m "Release 0.5.0"
-   git push origin v0.5.0
+   git tag -a v0.6.0 -m "Release 0.6.0"
+   git push origin v0.6.0
    ```
 
 3. The **Release** workflow runs full [CI](.github/workflows/ci.yml) via `workflow_call`, then builds wheels (Linux x86_64/aarch64, macOS, Windows) + sdist and publishes to PyPI only if CI passes (requires the `pypi` environment and [Trusted Publishing](https://docs.pypi.org/trusted-publishers/)).
 
-4. On GitHub, create a **Release** from the tag. Use [`.github/RELEASE_NOTES_v0.5.0.md`](.github/RELEASE_NOTES_v0.5.0.md) or the **0.5.0** section in `docs-site/docs/changelog.md` as the release notes body.
+4. On GitHub, create a **Release** from the tag. Use [`.github/RELEASE_NOTES_v0.6.0.md`](.github/RELEASE_NOTES_v0.6.0.md) or the **0.6.0** section in `CHANGELOG.md` as the release notes body.
 
 ## After release
 
