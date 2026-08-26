@@ -1,26 +1,126 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use jsonwebtoken::errors::{new_error, ErrorKind};
 use jsonwebtoken::{
-    crypto::verify as jwt_crypto_verify, dangerous, decode as jwt_decode, encode as jwt_encode,
-    Header,
+    crypto::verify as jwt_crypto_verify, dangerous, encode as jwt_encode, DecodingKey, Header,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use serde_json::Value;
 
-use crate::algorithms::{algorithm_name, parse_algorithm, parse_algorithm_name};
+use crate::algorithms::{
+    algorithm_name, ensure_single_family, parse_algorithm, parse_algorithm_name,
+};
 use crate::claims::{json_to_py, py_to_json_for_encode};
 use crate::claims_validate;
 use crate::errors;
 use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
-use crate::validation;
+use crate::validation::{self, DecodeValidation};
 
-/// Size limit plus strict three-segment compact JWS check (before jsonwebtoken).
+/// Size limit plus strict three-segment compact JWS check (before parsing).
 fn ensure_valid_compact_jwt(token: &str) -> PyResult<()> {
     jws::split_compact_segments(token)
         .map(|_| ())
         .map_err(errors::decode_error)
+}
+
+/// Failure from a decode step that runs with the GIL released.
+///
+/// Keeping the variants typed (instead of matching on message text) means the
+/// Python exception class is chosen from the failure itself.
+enum DecodeFail {
+    Jwt(jsonwebtoken::errors::Error),
+    Decode(String),
+    Token(String),
+}
+
+impl From<jsonwebtoken::errors::Error> for DecodeFail {
+    fn from(err: jsonwebtoken::errors::Error) -> Self {
+        DecodeFail::Jwt(err)
+    }
+}
+
+fn decode_fail(kind: ErrorKind) -> DecodeFail {
+    DecodeFail::Jwt(new_error(kind))
+}
+
+fn map_decode_fail(fail: DecodeFail) -> PyErr {
+    match fail {
+        DecodeFail::Jwt(err) => errors::from_jwt_decode_error(err),
+        DecodeFail::Decode(message) => errors::decode_error(message),
+        DecodeFail::Token(message) => errors::invalid_token(message),
+    }
+}
+
+/// Verified claims plus the protected header, both parsed exactly once.
+struct VerifiedToken {
+    header: Value,
+    claims: Value,
+}
+
+/// Verify a compact JWT and parse it in a single pass.
+///
+/// `jsonwebtoken::decode` parses the header twice and the payload twice (once
+/// for the caller's type, once for its internal validation struct) and returns
+/// a `Header` struct that we would have to re-serialize to hand back to Python.
+/// Doing the steps here keeps it to one header parse, one payload parse and one
+/// signature check, and lets us reuse the already-parsed header as the Python
+/// header dict.
+fn verify_and_parse(
+    token: &str,
+    decoding_key: &DecodingKey,
+    decode_validation: &DecodeValidation,
+) -> Result<VerifiedToken, DecodeFail> {
+    let (header_segment, payload_segment, signature_segment) =
+        jws::split_compact_segments(token).map_err(DecodeFail::Decode)?;
+
+    let header = jws::decode_header_json(header_segment).map_err(DecodeFail::Decode)?;
+    let algorithm = header_algorithm(&header)?;
+    if !decode_validation.algorithms().contains(&algorithm) {
+        return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+    }
+    // jsonwebtoken rejects an allow-list spanning several key families; keys
+    // built from a JWK skip the equivalent check in `keys.rs`.
+    ensure_single_family_for_decode(decode_validation.algorithms())?;
+
+    let signing_input = jws::signing_input_of(token, header_segment, payload_segment);
+    if !jwt_crypto_verify(signature_segment, signing_input, decoding_key, algorithm)? {
+        return Err(decode_fail(ErrorKind::InvalidSignature));
+    }
+
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|err| DecodeFail::Decode(err.to_string()))?;
+    let claims: Value =
+        serde_json::from_slice(&payload).map_err(|err| DecodeFail::Decode(err.to_string()))?;
+    if !claims.is_object() {
+        return Err(DecodeFail::Decode(
+            "Invalid payload string: must be a json object".to_owned(),
+        ));
+    }
+
+    claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
+
+    Ok(VerifiedToken { header, claims })
+}
+
+fn header_algorithm(header: &Value) -> Result<jsonwebtoken::Algorithm, DecodeFail> {
+    let name = header
+        .get("alg")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DecodeFail::Decode("missing field `alg` in JWT header".to_owned()))?;
+    // An unusable `alg` has always surfaced as `DecodeError` on this path, and
+    // that class is narrower than `InvalidTokenError`, so keep raising it.
+    parse_algorithm_name(name).map_err(DecodeFail::Decode)
+}
+
+fn ensure_single_family_for_decode(
+    algorithms: &[jsonwebtoken::Algorithm],
+) -> Result<(), DecodeFail> {
+    ensure_single_family(algorithms)
+        .map(|_| ())
+        .map_err(|_| decode_fail(ErrorKind::InvalidAlgorithm))
 }
 
 #[pyfunction]
@@ -72,17 +172,16 @@ pub fn decode(
     options: Option<&Bound<'_, PyAny>>,
     require: Option<Vec<String>>,
 ) -> PyResult<Py<PyAny>> {
-    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
-    let decoding_key = decoding_key_from_py(key, &decode_validation.algorithms)?;
+    let decoding_key = decoding_key_from_py(key, decode_validation.algorithms())?;
 
-    let token_data = py
-        .detach(|| jwt_decode::<Value>(token, &decoding_key, &decode_validation.validation))
-        .map_err(errors::from_jwt_decode_error)?;
+    let verified = py
+        .detach(|| verify_and_parse(token, &decoding_key, &decode_validation))
+        .map_err(map_decode_fail)?;
 
-    json_to_py(py, &token_data.claims)
+    json_to_py(py, &verified.claims)
 }
 
 type DecodeVerifiedCompleteOutput = (Py<PyAny>, Py<PyAny>, Py<PyBytes>);
@@ -117,11 +216,10 @@ pub fn decode_verified_complete(
     require: Option<Vec<String>>,
     detached_payload: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<DecodeVerifiedCompleteOutput> {
-    ensure_valid_compact_jwt(token)?;
     let decode_validation = validation::build_validation(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
-    let decoding_key = decoding_key_from_py(key, &decode_validation.algorithms)?;
+    let decoding_key = decoding_key_from_py(key, decode_validation.algorithms())?;
 
     if let Some(payload) = detached_payload {
         return decode_rfc7797_verified_complete(
@@ -133,23 +231,16 @@ pub fn decode_verified_complete(
         );
     }
 
-    let token_owned = token.to_owned();
-    let validation = decode_validation.validation;
-    let (token_data, signature) = py.detach(
-        move || -> PyResult<(jsonwebtoken::TokenData<Value>, Vec<u8>)> {
-            let token_data = jwt_decode::<Value>(&token_owned, &decoding_key, &validation)
-                .map_err(errors::from_jwt_decode_error)?;
-            let signature =
-                jws::extract_signature_bytes(&token_owned).map_err(errors::decode_error)?;
-            Ok((token_data, signature))
-        },
-    )?;
+    let (verified, signature) = py
+        .detach(|| -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
+            let verified = verify_and_parse(token, &decoding_key, &decode_validation)?;
+            let signature = jws::extract_signature_bytes(token).map_err(DecodeFail::Decode)?;
+            Ok((verified, signature))
+        })
+        .map_err(map_decode_fail)?;
 
-    let header_value = serde_json::to_value(&token_data.header).map_err(|err| {
-        errors::decode_error(format!("failed to serialize decoded header: {err}"))
-    })?;
-    let header_py = json_to_py(py, &header_value)?;
-    let claims_py = json_to_py(py, &token_data.claims)?;
+    let claims_py = json_to_py(py, &verified.claims)?;
+    let header_py = json_to_py(py, &verified.header)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims_py, header_py, sig_py.into()))
 }
@@ -167,86 +258,47 @@ fn decode_rfc7797_verified_complete(
             jws::MAX_COMPACT_JWT_BYTES
         )));
     }
-    let token = token.to_owned();
-    let payload = detached_payload.to_vec();
-    let allowed_algorithms = decode_validation.algorithms.clone();
-    let decoding_key = decoding_key.clone();
-    let validation = decode_validation.validation.clone();
+
     let (parts, claims, signature) = py
-        .detach(move || {
-            let parts = jws::parse_rfc7797_compact(&token)?;
-            let claims: Value = serde_json::from_slice(&payload)
-                .map_err(|err| format!("Invalid payload string: {err}"))?;
+        .detach(|| -> Result<_, DecodeFail> {
+            let parts = jws::parse_rfc7797_compact(token).map_err(DecodeFail::Token)?;
+            let claims: Value = serde_json::from_slice(detached_payload)
+                .map_err(|err| DecodeFail::Decode(format!("Invalid payload string: {err}")))?;
             if !claims.is_object() {
-                return Err("Invalid payload string: must be a json object".to_string());
+                return Err(DecodeFail::Decode(
+                    "Invalid payload string: must be a json object".to_owned(),
+                ));
             }
-            let alg_name = parts
-                .header
-                .get("alg")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "Algorithm not specified".to_string())?;
-            let algorithm = parse_algorithm_name(alg_name)?;
-            if !allowed_algorithms.contains(&algorithm) {
-                return Err("The specified alg value is not allowed".to_string());
+
+            let algorithm = header_algorithm(&parts.header)?;
+            if !decode_validation.algorithms().contains(&algorithm) {
+                return Err(decode_fail(ErrorKind::InvalidAlgorithm));
             }
-            let signing_input = jws::signing_input_rfc7797(&parts.header_segment, &payload);
-            let verified = jwt_crypto_verify(
+            ensure_single_family_for_decode(decode_validation.algorithms())?;
+
+            let signing_input = jws::signing_input_rfc7797(&parts.header_segment, detached_payload);
+            if !jwt_crypto_verify(
                 &parts.signature_segment,
                 &signing_input,
-                &decoding_key,
+                decoding_key,
                 algorithm,
-            )
-            .map_err(|err| err.to_string())?;
-            if !verified {
-                return Err("Signature verification failed".to_string());
+            )? {
+                return Err(decode_fail(ErrorKind::InvalidSignature));
             }
-            claims_validate::validate_claims_value(&claims, &validation)
-                .map_err(|err| err.to_string())?;
+
+            claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
+
             let signature = URL_SAFE_NO_PAD
                 .decode(&parts.signature_segment)
-                .map_err(|e| e.to_string())?;
+                .map_err(|err| DecodeFail::Decode(err.to_string()))?;
             Ok((parts, claims, signature))
         })
-        .map_err(map_rfc7797_decode_error)?;
+        .map_err(map_decode_fail)?;
 
     let header_py = json_to_py(py, &parts.header)?;
     let claims_py = json_to_py(py, &claims)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims_py, header_py, sig_py.into()))
-}
-
-fn map_rfc7797_decode_error(message: String) -> PyErr {
-    if message.contains("Expired") || message.contains("expired") {
-        return errors::ExpiredSignatureError::new_err(message);
-    }
-    if message.contains("Immature") || message.contains("not yet valid") {
-        return errors::ImmatureSignatureError::new_err(message);
-    }
-    if message.contains("Invalid audience") || message.contains("Audience") {
-        return errors::InvalidAudienceError::new_err(message);
-    }
-    if message.contains("Invalid issuer") || message.contains("issuer") {
-        return errors::InvalidIssuerError::new_err(message);
-    }
-    if message.contains("Invalid subject") || message.contains("Subject") {
-        return errors::InvalidSubjectError::new_err(message);
-    }
-    if message.contains("Missing") && message.contains("claim") {
-        return errors::MissingRequiredClaimError::new_err(message);
-    }
-    if message.contains("Signature verification failed") {
-        return errors::InvalidSignatureError::new_err(message);
-    }
-    if message.contains("not allowed") || message.contains("not supported") {
-        return errors::InvalidAlgorithmError::new_err(message);
-    }
-    if message.contains("Invalid payload") {
-        return errors::DecodeError::new_err(message);
-    }
-    if message.contains("b64") || message.contains("Payload segment") {
-        return errors::InvalidTokenError::new_err(message);
-    }
-    errors::decode_error(message)
 }
 
 #[pyfunction]

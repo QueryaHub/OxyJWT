@@ -6,8 +6,14 @@ use crate::algorithms::parse_algorithm;
 use crate::errors;
 
 pub struct DecodeValidation {
-    pub algorithms: Vec<Algorithm>,
     pub validation: Validation,
+}
+
+impl DecodeValidation {
+    /// Algorithms the caller allows, in the order they were supplied.
+    pub fn algorithms(&self) -> &[Algorithm] {
+        &self.validation.algorithms
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -31,35 +37,28 @@ pub fn build_validation(
         .map(|algorithm| parse_algorithm(algorithm))
         .collect::<PyResult<Vec<_>>>()?;
 
+    // One cast of the options mapping instead of one per key.
+    let opts = decode_options(options)?;
+
     let mut validation = Validation::new(parsed_algorithms[0]);
-    validation.algorithms = parsed_algorithms.clone();
+    validation.algorithms = parsed_algorithms;
     validation.leeway = leeway_as_u64(leeway);
-    validation.validate_exp = option_bool(options, "verify_exp", true)?;
-    validation.validate_nbf = option_bool(options, "verify_nbf", true)?;
-    validation.required_spec_claims.clear();
+    validation.validate_exp = opts.flag("verify_exp", true)?;
+    validation.validate_nbf = opts.flag("verify_nbf", true)?;
 
-    if option_bool(options, "require_exp", false)? {
-        validation.required_spec_claims.insert("exp".to_owned());
+    // `Validation::new` pre-seeds `exp`; keep it only if the caller asked for it.
+    if !opts.flag("require_exp", false)? {
+        validation.required_spec_claims.clear();
     }
 
-    let mut merged_require = require.unwrap_or_default();
-    if let Some(opts) = options {
-        if !opts.is_none() {
-            if let Ok(dict) = opts.cast::<PyDict>() {
-                if let Ok(Some(req)) = dict.get_item("require") {
-                    let more: Vec<String> = req.extract().map_err(|_| {
-                        errors::decode_error("options['require'] must be a list of strings")
-                    })?;
-                    merged_require.extend(more);
-                }
-            }
-        }
+    if let Some(claims) = require {
+        validation.required_spec_claims.extend(claims);
     }
-    for claim in merged_require {
-        validation.required_spec_claims.insert(claim);
+    if let Some(claims) = opts.require()? {
+        validation.required_spec_claims.extend(claims);
     }
 
-    let verify_aud = option_bool(options, "verify_aud", true)?;
+    let verify_aud = opts.flag("verify_aud", true)?;
     if let Some(values) = audience.map(string_or_list).transpose()? {
         if verify_aud {
             validation.validate_aud = true;
@@ -71,8 +70,7 @@ pub fn build_validation(
         validation.validate_aud = false;
     }
 
-    let verify_iss = option_bool(options, "verify_iss", true)?;
-    if verify_iss {
+    if opts.flag("verify_iss", true)? {
         if let Some(values) = issuer.map(string_or_list).transpose()? {
             if !values.is_empty() {
                 validation.set_issuer(&values);
@@ -80,15 +78,51 @@ pub fn build_validation(
         }
     }
 
-    let verify_sub = option_bool(options, "verify_sub", true)?;
-    if verify_sub {
+    if opts.flag("verify_sub", true)? {
         validation.sub = subject;
     }
 
-    Ok(DecodeValidation {
-        algorithms: parsed_algorithms,
-        validation,
-    })
+    Ok(DecodeValidation { validation })
+}
+
+/// The decode `options` mapping, cast once and then queried by key.
+struct DecodeOptions<'py>(Option<Bound<'py, PyDict>>);
+
+fn decode_options<'py>(options: Option<&Bound<'py, PyAny>>) -> PyResult<DecodeOptions<'py>> {
+    let Some(options) = options.filter(|value| !value.is_none()) else {
+        return Ok(DecodeOptions(None));
+    };
+    let dict = options
+        .cast::<PyDict>()
+        .map_err(|_| errors::decode_error("options must be a dict"))?;
+    Ok(DecodeOptions(Some(dict.clone())))
+}
+
+impl DecodeOptions<'_> {
+    fn flag(&self, key: &str, default: bool) -> PyResult<bool> {
+        let Some(dict) = self.0.as_ref() else {
+            return Ok(default);
+        };
+        match dict.get_item(key)? {
+            Some(value) => value
+                .extract::<bool>()
+                .map_err(|_| errors::decode_error(format!("options['{key}'] must be a bool"))),
+            None => Ok(default),
+        }
+    }
+
+    fn require(&self) -> PyResult<Option<Vec<String>>> {
+        let Some(dict) = self.0.as_ref() else {
+            return Ok(None);
+        };
+        match dict.get_item("require")? {
+            Some(value) if !value.is_none() => value
+                .extract()
+                .map(Some)
+                .map_err(|_| errors::decode_error("options['require'] must be a list of strings")),
+            _ => Ok(None),
+        }
+    }
 }
 
 /// Map Python `leeway` (float seconds) to jsonwebtoken's whole-second `leeway`.
@@ -99,27 +133,6 @@ pub fn leeway_as_u64(leeway: f64) -> u64 {
         u64::MAX
     } else {
         leeway.round() as u64
-    }
-}
-
-fn option_bool(options: Option<&Bound<'_, PyAny>>, key: &str, default: bool) -> PyResult<bool> {
-    let Some(options) = options else {
-        return Ok(default);
-    };
-
-    if options.is_none() {
-        return Ok(default);
-    }
-
-    let dict = options
-        .cast::<PyDict>()
-        .map_err(|_| errors::decode_error("options must be a dict"))?;
-
-    match dict.get_item(key)? {
-        Some(value) => value
-            .extract::<bool>()
-            .map_err(|_| errors::decode_error(format!("options['{key}'] must be a bool"))),
-        None => Ok(default),
     }
 }
 

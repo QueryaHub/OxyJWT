@@ -43,6 +43,10 @@ _UNVERIFIED_DECODE_WARNING = (
     "signature verification; claims must not be used for authorization."
 )
 
+# Distinguishes "claim absent" from "claim present but null", which must still
+# be rejected as a malformed value.
+_MISSING: Any = object()
+
 
 def _sig_as_bytes(sig: object) -> bytes:
     if isinstance(sig, (bytes, bytearray, memoryview)):
@@ -83,6 +87,11 @@ def _require_detached_payload_for_rfc7797(
     """Raise when verified decode needs RFC 7797 detached_payload (b64: false)."""
     if detached_payload is not None or not verify_signature:
         return
+    # The b64:false form has an empty payload segment, and base64url never
+    # contains a dot, so ".." is the only way it can appear. Checking for it
+    # first keeps ordinary tokens off the split/header-parse path.
+    if ".." not in token:
+        return
     segments = token.split(".", 2)
     if len(segments) < 3 or segments[1] != "":
         return
@@ -92,6 +101,52 @@ def _require_detached_payload_for_rfc7797(
             'It is required that you pass in a value for the "detached_payload" '
             "argument to decode a message having the b64 header set to false."
         )
+
+
+def _check_string_or_iterable(value: object, name: str) -> None:
+    """Reject values that cannot name an audience or issuer.
+
+    Bytes-like objects are iterable but would compare per-byte, so they are
+    excluded even though they satisfy the ``Iterable`` check.
+    """
+    if isinstance(value, (bytes, bytearray, memoryview)) or not isinstance(
+        value, (str, Iterable)
+    ):
+        raise TypeError(f"{name} must be a string, iterable or None")
+
+
+def _is_plain_decode(
+    options: dict[str, Any] | None,
+    verify: bool | None,
+    detached_payload: bytes | None,
+    audience: object,
+    issuer: object,
+    subject: str | None,
+    leeway: float | timedelta,
+    typ: str | None,
+    algorithms: list[str] | None,
+) -> bool:
+    """True when no argument changes the default verified-decode behaviour.
+
+    With nothing but ``algorithms`` supplied, Rust validates ``exp``/``nbf``
+    and has no audience/issuer/subject to check, so the remaining claim rules
+    reduce to :meth:`PyJWT._validate_claims_default`. A ``timedelta`` leeway
+    never compares equal to ``0`` and therefore takes the general path, as do
+    algorithm containers the native module cannot read directly (a set or an
+    iterator), which the general path normalises with ``list()``.
+    """
+    return (
+        options is None
+        and audience is None
+        and issuer is None
+        and subject is None
+        and typ is None
+        and detached_payload is None
+        and verify is None
+        and leeway == 0
+        and bool(algorithms)
+        and isinstance(algorithms, (list, tuple))
+    )
 
 
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
@@ -106,6 +161,9 @@ def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any]
 class PyJWT:
     def __init__(self, options: dict[str, Any] | None = None) -> None:
         self._options: dict[str, Any] = {**_DEFAULT_DECODE_OPTIONS, **(options or {})}
+        # Instance options can switch individual checks off, so the fast decode
+        # path is only equivalent while every default is still in place.
+        self._default_options: bool = self._options == _DEFAULT_DECODE_OPTIONS
 
     @staticmethod
     def _get_default_options() -> dict[str, Any]:
@@ -124,21 +182,27 @@ class PyJWT:
             raise TypeError(
                 "Expecting a dict object, as JWT only supports JSON objects as payloads."
             )
-        pl = dict(payload)
+        # Copy only when a datetime actually has to be rewritten, so the common
+        # case of integer time claims does not pay for a dict copy.
+        pl = payload
         for time_claim in ("exp", "iat", "nbf"):
-            v = pl.get(time_claim)
+            v = payload.get(time_claim)
             if isinstance(v, datetime):
+                if pl is payload:
+                    pl = dict(payload)
                 pl[time_claim] = timegm(v.utctimetuple())
         alg = algorithm if algorithm is not None else "HS256"
-        if json_encoder is None and not sort_headers:
-            return _oxyjwt.encode(pl, key, alg, headers)
-        opts = orjson.OPT_SORT_KEYS if sort_headers else 0
+        # `sort_headers` does not affect the output: claim keys come out sorted
+        # either way, because the native `encode` entry point backs JSON objects
+        # with serde_json's BTreeMap. Serializing once with orjson and handing
+        # the bytes to Rust is the cheaper of the two equivalent routes.
+        _ = sort_headers
         if json_encoder is None:
-            body_b = orjson.dumps(pl, option=opts)
+            body_b = orjson.dumps(pl, option=orjson.OPT_SORT_KEYS)
         else:
             body_b = orjson.dumps(
                 pl,
-                option=opts,
+                option=orjson.OPT_SORT_KEYS,
                 default=_json_default_from_encoder(json_encoder),
             )
         return _oxyjwt.encode_json(body_b, key, alg, headers)
@@ -158,6 +222,21 @@ class PyJWT:
         typ: str | None = None,
         **kwargs: Any,
     ) -> Any:
+        if (
+            self._default_options
+            and not kwargs
+            and _is_plain_decode(
+                options, verify, detached_payload, audience, issuer, subject, leeway,
+                typ, algorithms,
+            )
+        ):
+            token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
+            _require_detached_payload_for_rfc7797(
+                token, detached_payload=None, verify_signature=True
+            )
+            payload = _oxyjwt.decode(token, key, algorithms)
+            self._validate_claims_default(payload)
+            return payload
         if kwargs:
             warnings.warn(
                 "passing additional kwargs to decode() is deprecated "
@@ -196,6 +275,23 @@ class PyJWT:
         typ: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        if (
+            self._default_options
+            and not kwargs
+            and _is_plain_decode(
+                options, verify, detached_payload, audience, issuer, subject, leeway,
+                typ, algorithms,
+            )
+        ):
+            token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
+            _require_detached_payload_for_rfc7797(
+                token, detached_payload=None, verify_signature=True
+            )
+            payload, header, signature = _oxyjwt.decode_verified_complete(
+                token, key, algorithms
+            )
+            self._validate_claims_default(payload)
+            return {"payload": payload, "header": header, "signature": signature}
         if kwargs:
             first = next(iter(kwargs))
             warnings.warn(
@@ -209,8 +305,9 @@ class PyJWT:
         ):
             raise TypeError("detached_payload must be bytes")
         # Match PyJWT: JWS/algorithm gating uses call-only `options` + setdefault, then merge for claims
-        co: dict[str, Any] = dict(options or {})
+        co: dict[str, Any] = dict(options) if options else {}
         co.setdefault("verify_signature", True)
+        verify_signature = bool(co["verify_signature"])
         if typ is not None:
             co["typ"] = typ
             co["verify_typ"] = True
@@ -222,7 +319,7 @@ class PyJWT:
                 DeprecationWarning,
                 stacklevel=2,
             )
-        if not co.get("verify_signature", True):
+        if not verify_signature:
             warnings.warn(
                 _UNVERIFIED_DECODE_WARNING,
                 InsecureDecodeWarning,
@@ -234,17 +331,23 @@ class PyJWT:
             co.setdefault("verify_aud", False)
             co.setdefault("verify_iss", False)
             co.setdefault("verify_sub", False)
-        if co.get("verify_signature", True) and not algorithms:
+        if verify_signature and not algorithms:
             raise DecodeError(
                 'It is required that you pass in a value for the "algorithms" argument when calling decode().'
             )
         _require_detached_payload_for_rfc7797(
             token,
             detached_payload=detached_payload,
-            verify_signature=bool(co.get("verify_signature", True)),
+            verify_signature=verify_signature,
         )
-        merged = {**self._options, **co}
-        if not co.get("verify_signature", True):
+        if len(co) == 1 and verify_signature and self._default_options:
+            # `co` holds nothing but the implied verify_signature=True, so the
+            # merge would reproduce the instance options exactly. Nothing below
+            # mutates `merged`, so it is safe to alias.
+            merged = self._options
+        else:
+            merged = {**self._options, **co}
+        if not verify_signature:
             if subject is not None and not merged.get("verify_sub", False):
                 warnings.warn(
                     "The subject argument is ignored when verify_sub is False "
@@ -267,21 +370,13 @@ class PyJWT:
                     InsecureDecodeWarning,
                     stacklevel=2,
                 )
-        if audience is not None and not isinstance(
-            audience, (str, Iterable, type(None))
-        ):
-            raise TypeError("audience must be a string, iterable or None")
-        if audience is not None and isinstance(audience, (bytes, bytearray, memoryview)):
-            raise TypeError("audience must be a string, iterable or None")
-        if issuer is not None and not isinstance(
-            issuer, (str, Iterable, type(None))
-        ):
-            raise TypeError("issuer must be a string, iterable or None")
-        if issuer is not None and isinstance(issuer, (bytes, bytearray, memoryview)):
-            raise TypeError("issuer must be a string, iterable or None")
+        if audience is not None:
+            _check_string_or_iterable(audience, "audience")
+        if issuer is not None:
+            _check_string_or_iterable(issuer, "issuer")
 
         lwf = _leeway_seconds(leeway)
-        if not co.get("verify_signature", True):
+        if not verify_signature:
             _s, header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
             header = _as_plain_dict(header_obj)
             if detached_payload is not None:
@@ -312,16 +407,16 @@ class PyJWT:
         if req is not None and not isinstance(req, (list, tuple)):
             req = list(req)
         whole_leeway = _leeway_is_whole_seconds(lwf)
-        rust_options: dict[str, Any] = dict(merged)
-        if not whole_leeway:
-            if merged.get("verify_exp", True):
-                rust_options["verify_exp"] = False
-            if merged.get("verify_nbf", True):
-                rust_options["verify_nbf"] = False
+        if whole_leeway:
+            rust_options: dict[str, Any] = merged
+        else:
+            # Fractional leeway cannot be expressed in jsonwebtoken's
+            # whole-second validation, so Python takes over exp/nbf.
+            rust_options = {**merged, "verify_exp": False, "verify_nbf": False}
         dec, header_obj, sigb = _oxyjwt.decode_verified_complete(
             token,
             key,
-            list(algorithms),
+            algorithms if isinstance(algorithms, (list, tuple)) else list(algorithms),
             audience=audience,
             issuer=issuer,
             subject=subject,
@@ -350,6 +445,46 @@ class PyJWT:
             "header": header,
             "signature": _sig_as_bytes(sigb),
         }
+
+    def _validate_claims_default(self, payload: dict[str, Any]) -> None:
+        """Claim checks left to Python after a plain verified decode.
+
+        Equivalent to :meth:`_validate_claims` with default options, no
+        ``require`` list, zero leeway and both ``rust_time_claims`` and
+        ``rust_standard_claims`` true: Rust already validated ``exp``/``nbf``,
+        so only ``iat``, the Python ``exp`` boundary, the "no audience
+        expected" rule and the ``sub`` type check remain.
+        """
+        now = time.time()
+
+        iat = payload.get("iat", _MISSING)
+        if iat is not _MISSING:
+            try:
+                iat_value = int(iat)
+            except (ValueError, TypeError) as e:
+                raise InvalidIssuedAtError(
+                    "Issued At claim (iat) must be an integer."
+                ) from e
+            if iat_value > now:
+                raise ImmatureSignatureError("The token is not yet valid (iat)")
+
+        exp = payload.get("exp", _MISSING)
+        if exp is not _MISSING:
+            try:
+                exp_value = int(exp)
+            except (ValueError, TypeError) as e:
+                raise DecodeError(
+                    "Expiration Time claim (exp) must be an integer."
+                ) from e
+            if exp_value <= now:
+                raise ExpiredSignatureError("Signature has expired")
+
+        if payload.get("aud"):
+            raise InvalidAudienceError("Invalid audience")
+
+        sub = payload.get("sub", _MISSING)
+        if sub is not _MISSING and not isinstance(sub, str):
+            raise InvalidSubjectError("Subject must be a string")
 
     def _validate_claims(
         self,

@@ -42,7 +42,7 @@ pub fn split_compact_segments(token: &str) -> Result<(&str, &str, &str), String>
     Ok((h, p, s))
 }
 
-fn decode_header_json(header_segment: &str) -> Result<Value, String> {
+pub fn decode_header_json(header_segment: &str) -> Result<Value, String> {
     let header_bytes = URL_SAFE_NO_PAD
         .decode(header_segment)
         .map_err(|e| e.to_string())?;
@@ -119,6 +119,14 @@ pub fn parse_rfc7797_compact(token: &str) -> Result<Rfc7797Parts, String> {
     })
 }
 
+/// JWS signing input (`header.payload`) as a borrowed prefix of the compact token.
+///
+/// Both segments must come from [`split_compact_segments`] on the same token.
+pub fn signing_input_of<'a>(token: &'a str, header: &str, payload: &str) -> &'a [u8] {
+    let len = header.len() + 1 + payload.len();
+    &token.as_bytes()[..len]
+}
+
 pub fn signing_input_rfc7797(header_segment: &str, payload: &[u8]) -> Vec<u8> {
     let mut signing_input =
         Vec::with_capacity(header_segment.len().saturating_add(1) + payload.len());
@@ -193,6 +201,15 @@ mod tests {
             "Too many segments"
         );
         assert_eq!(parse_compact_jws(token).unwrap_err(), "Too many segments");
+    }
+
+    #[test]
+    fn borrowed_signing_input_matches_owned_parse() {
+        let token =
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+        let (h, p, _) = split_compact_segments(token).expect("split");
+        let (owned, _, _, _) = parse_compact_jws(token).expect("parse");
+        assert_eq!(signing_input_of(token, h, p), owned.as_slice());
     }
 
     #[test]
