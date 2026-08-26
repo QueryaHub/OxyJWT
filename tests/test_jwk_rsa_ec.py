@@ -19,6 +19,10 @@ def _b64u_int(value: int) -> str:
     return base64.urlsafe_b64encode(value.to_bytes(length, "big")).decode().rstrip("=")
 
 
+def _b64u_coord(value: int, length: int) -> str:
+    return base64.urlsafe_b64encode(value.to_bytes(length, "big")).decode().rstrip("=")
+
+
 def _private_pem(key: object) -> bytes:
     return key.private_bytes(
         serialization.Encoding.PEM,
@@ -47,14 +51,15 @@ def ec_jwk_dict(
     kid: str,
 ) -> dict[str, Any]:
     pub = key.public_key().public_numbers()
+    coord_len = 32 if crv == "P-256" else (48 if crv == "P-384" else 66)
     return {
         "kty": "EC",
         "kid": kid,
         "use": "sig",
         "alg": alg,
         "crv": crv,
-        "x": _b64u_int(pub.x),
-        "y": _b64u_int(pub.y),
+        "x": _b64u_coord(pub.x, coord_len),
+        "y": _b64u_coord(pub.y, coord_len),
     }
 
 
