@@ -13,3 +13,8 @@ class InsecureDecodeWarning(UserWarning):
 
 class PyJWKSetSkipWarning(UserWarning):
     """Emitted when a JWK entry in a set cannot be used and is skipped."""
+
+
+class InsecureJWKSUriWarning(UserWarning):
+    """Emitted when fetching JWKS over unencrypted HTTP (RFC 8725 §3.10)."""
+

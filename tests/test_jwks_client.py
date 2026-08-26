@@ -646,3 +646,9 @@ def test_jwks_client_refresh_cooldown_throttles_rapid_refreshes() -> None:
             c.get_signing_key("non-existent-kid")
     assert _JWKHandler.request_count == 1
 
+
+def test_jwks_client_http_uri_emits_insecure_warning() -> None:
+    with pytest.warns(oxyjwt.InsecureJWKSUriWarning, match="unencrypted HTTP"):
+        PyJWKClient("http://example.invalid/jwks.json")
+
+
