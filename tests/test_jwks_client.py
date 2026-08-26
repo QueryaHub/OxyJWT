@@ -652,3 +652,43 @@ def test_jwks_client_http_uri_emits_insecure_warning() -> None:
         PyJWKClient("http://example.invalid/jwks.json")
 
 
+def test_jwks_client_single_flight_coalescing() -> None:
+    secret_old = b"secret-old-32-bytes-long-ok!!!"
+    secret_new = b"secret-new-32-bytes-long-ok!!!"
+    jw_old = {"kty": "oct", "k": _b64u(secret_old), "kid": "old-key"}
+    jw_new = {"kty": "oct", "k": _b64u(secret_new), "kid": "new-key"}
+    uri = _serve_rotating_jwks({"keys": [jw_old]}, {"keys": [jw_new]})
+    c = PyJWKClient(uri, cache_jwk_set=True, cache_keys=True, timeout=5.0)
+
+    # Initial fetch
+    c.get_signing_key("old-key")
+    initial_count = _RotatingJWKHandler.request_count
+
+    # 16 threads concurrently asking for the new rotated key
+    results: list[PyJWK] = []
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        try:
+            key = c.get_signing_key("new-key")
+            with lock:
+                results.append(key)
+        except BaseException as e:  # noqa: BLE001
+            with lock:
+                errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(16)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    assert len(results) == 16
+    assert all(r.key_id == "new-key" for r in results)
+    # Exactly 1 additional network request was made across all 16 concurrent threads due to single-flight coalescing
+    assert _RotatingJWKHandler.request_count == initial_count + 1
+
+
+
