@@ -170,3 +170,16 @@ def test_decode_unverified_is_explicit() -> None:
     token = oxyjwt.encode(_payload(), "secret", algorithm="HS256")
 
     assert oxyjwt.decode_unverified(token)["sub"] == "user-123"
+
+
+def test_encode_deeply_nested_claims_rejected() -> None:
+    nested: dict[str, object] = {"a": 1}
+    current = nested
+    for _ in range(150):
+        next_dict: dict[str, object] = {}
+        current["child"] = next_dict
+        current = next_dict
+    with pytest.raises(oxyjwt.EncodeError, match="maximum recursion depth"):
+        oxyjwt._oxyjwt.encode(nested, "secret", "HS256")
+
+
