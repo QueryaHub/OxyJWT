@@ -2,12 +2,29 @@
 
 ## Unreleased
 
+(No changes yet.)
+
+## 0.7.0 — 2026-08-26
+
 Performance release. Verified `decode` is about **2.3× faster** and `encode` about
 **1.2× faster** than 0.6.0 on the HS256 hot path, with no change to any successful
 decode or encode result. Measured locally with CPython 3.14 on Linux/x86-64;
-absolute numbers vary by machine.
+absolute numbers vary by machine. The API remains pre-1.0 (Beta). See
+[Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
 
-| Operation | 0.6.0 | Now | Change |
+### Upgrading from 0.6.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface.
+- One edge-case behaviour change: a **present but unparseable** claim listed in
+  `options["require"]` (for example `{"exp": "not-a-number"}`) now raises
+  `DecodeError` instead of `MissingRequiredClaimError`, matching PyJWT.
+- Absent and JSON `null` required claims still raise `MissingRequiredClaimError`.
+
+| Operation | 0.6.0 | 0.7.0 | Change |
 | --- | --- | --- | --- |
 | `decode` | 6.08 µs | 2.64 µs | 2.30× faster |
 | `decode_complete` | 5.90 µs | 2.98 µs | 1.98× faster |

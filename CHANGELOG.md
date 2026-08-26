@@ -7,12 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+(No changes yet.)
+
+## [0.7.0] — 2026-08-26
+
 Performance release. Verified `decode` is about **2.3× faster** and `encode` about
 **1.2× faster** than 0.6.0 on the HS256 hot path, with no change to any successful
 decode or encode result. Measured locally with CPython 3.14 on Linux/x86-64;
-absolute numbers vary by machine.
+absolute numbers vary by machine. The API remains pre-1.0 (Beta). See
+[`docs-site/docs/versioning.md`](docs-site/docs/versioning.md) and [`SECURITY.md`](SECURITY.md).
 
-| Operation | 0.6.0 | Now | Change |
+### Upgrading from 0.6.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface.
+- One edge-case behaviour change: a **present but unparseable** claim listed in
+  `options["require"]` (for example `{"exp": "not-a-number"}`) now raises
+  `DecodeError` instead of `MissingRequiredClaimError`, matching PyJWT.
+- Absent and JSON `null` required claims still raise `MissingRequiredClaimError`.
+
+| Operation | 0.6.0 | 0.7.0 | Change |
 | --- | --- | --- | --- |
 | `decode` | 6.08 µs | 2.64 µs | 2.30× faster |
 | `decode_complete` | 5.90 µs | 2.98 µs | 1.98× faster |
@@ -286,7 +303,8 @@ Initial alpha release.
 - Mixed algorithm families are rejected for one decode call.
 - In 0.1.0, `verify_signature=False` was rejected in `decode` (0.2.0 allows an explicit unverified path).
 
-[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.3.0...v0.4.0
