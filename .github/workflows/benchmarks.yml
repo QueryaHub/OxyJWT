@@ -1,19 +1,60 @@
-# Full throughput comparison (not a hard regression gate). HS256 ratio gates run in main CI via pytest smoke.
-name: Benchmarks
+name: Performance Benchmarks
 
 on:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - "rust/**"
+      - "python/**"
+      - "scripts/compare_jwt_libraries.py"
+      - "scripts/update_readme_benchmarks.py"
+      - "tests/test_benchmark_jwt_libraries.py"
+      - ".github/workflows/benchmarks.yml"
+  push:
+    branches: [main, dev]
+    paths:
+      - "rust/**"
+      - "python/**"
+      - "scripts/compare_jwt_libraries.py"
+      - "scripts/update_readme_benchmarks.py"
+      - "tests/test_benchmark_jwt_libraries.py"
+      - ".github/workflows/benchmarks.yml"
   schedule:
     - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      algorithms:
+        description: "Algorithms to benchmark (comma-separated or 'all')"
+        required: false
+        default: "HS256,RS256,EdDSA,ES256"
+        type: string
+      iterations:
+        description: "Number of iterations per round"
+        required: false
+        default: "200"
+        type: string
+      rounds:
+        description: "Number of measurement rounds"
+        required: false
+        default: "2"
+        type: string
+      update_readme:
+        description: "Update README.md with benchmark results (if running on main)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  compare:
+  benchmark:
+    name: Run Benchmarks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Fetch all history so push to main works smoothly
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -31,33 +72,79 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install -U pip maturin pytest cryptography pyjwt authlib python-jose
 
-      - name: Build and install OxyJWT
+      - name: Build and install OxyJWT (release)
         run: .venv/bin/maturin develop --release
 
-      - name: HS256 smoke regression (same gate as main CI)
-        run: .venv/bin/python -m pytest tests/test_benchmark_jwt_libraries.py::test_benchmark_hs256_smoke_vs_competitors -q
+      - name: HS256 smoke regression gate
+        run: .venv/bin/python -m pytest tests/test_benchmark_jwt_libraries.py::test_benchmark_hs256_smoke_vs_competitors -v
 
-      - name: Run full comparison script (default pem keys)
+      - name: Multi-algorithm extended benchmark test
+        run: OXYJWT_BENCHMARK=1 .venv/bin/python -m pytest tests/test_benchmark_jwt_libraries.py::test_benchmark_multi_algorithm_extended -v
+
+      - name: Run throughput comparison (PEM mode)
         run: |
           mkdir -p benchmark-results
+          ALGS="${{ inputs.algorithms || 'HS256,RS256,EdDSA,ES256' }}"
+          ITERS="${{ inputs.iterations || '200' }}"
+          ROUNDS="${{ inputs.rounds || '2' }}"
           .venv/bin/python scripts/compare_jwt_libraries.py \
-            --algorithms HS256,RS256,EdDSA \
-            --iterations 200 \
-            --rounds 2 \
+            --algorithms "$ALGS" \
+            --iterations "$ITERS" \
+            --rounds "$ROUNDS" \
             --warmup 50 \
+            --json benchmark-results/ci-bench.json \
             --markdown benchmark-results/ci-bench.md
 
-      - name: Run asymmetric comparison (cached competitor keys)
+      - name: Run asymmetric comparison (cached competitor keys mode)
         run: |
+          ITERS="${{ inputs.iterations || '200' }}"
+          ROUNDS="${{ inputs.rounds || '2' }}"
           .venv/bin/python scripts/compare_jwt_libraries.py \
             --algorithms RS256,EdDSA \
-            --iterations 200 \
-            --rounds 2 \
+            --iterations "$ITERS" \
+            --rounds "$ROUNDS" \
             --warmup 50 \
             --competitor-key-mode cached \
             --markdown benchmark-results/ci-bench-cached.md
 
+      - name: Publish benchmark summary to GitHub Actions
+        if: always()
+        run: |
+          echo "## ⚡ OxyJWT Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f benchmark-results/ci-bench.md ]; then
+            echo "### 📊 Full Comparison (Default PEM Keys)" >> $GITHUB_STEP_SUMMARY
+            cat benchmark-results/ci-bench.md >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ -f benchmark-results/ci-bench-cached.md ]; then
+            echo "### 🔑 Asymmetric Comparison (Cached Competitor Keys)" >> $GITHUB_STEP_SUMMARY
+            cat benchmark-results/ci-bench-cached.md >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Update README benchmark table
+        if: success() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update_readme))
+        run: |
+          .venv/bin/python scripts/update_readme_benchmarks.py \
+            --json benchmark-results/ci-bench.json \
+            --readme README.md
+
+      - name: Commit and push updated README to main
+        if: success() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.update_readme)) && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git status --porcelain | grep -q "README.md"; then
+            git add README.md
+            git commit -m "chore(benchmarks): update weekly performance numbers in README [skip ci]"
+            git push origin main
+          else
+            echo "No changes in README.md to commit."
+          fi
+
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: benchmark-md
+          name: benchmark-results
           path: benchmark-results/
