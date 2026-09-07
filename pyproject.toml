@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "oxyjwt"
 version = "0.7.0"
-description = "A Python JWT library powered by a Rust core."
+description = "High-performance Python JWT/JWS library backed by a Rust core (PyJWT drop-in replacement)."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -15,7 +15,22 @@ license = "MIT"
 authors = [
   { name = "OxyJWT contributors" },
 ]
-keywords = ["jwt", "jws", "rust", "pyo3", "maturin", "pyjwt"]
+keywords = [
+  "jwt",
+  "jws",
+  "json-web-token",
+  "rust",
+  "pyo3",
+  "maturin",
+  "pyjwt",
+  "authentication",
+  "security",
+  "cryptography",
+  "fastapi",
+  "high-performance",
+  "orjson",
+  "jwks",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -54,7 +69,10 @@ docs = [
 ]
 
 [project.urls]
+Homepage = "https://oxyjwt.queryahub.com/"
+Documentation = "https://oxyjwt.queryahub.com/"
 Repository = "https://github.com/QueryaHub/OxyJWT"
+Issues = "https://github.com/QueryaHub/OxyJWT/issues"
 Changelog = "https://github.com/QueryaHub/OxyJWT/blob/main/CHANGELOG.md"
 
 [tool.mypy]
