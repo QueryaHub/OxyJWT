@@ -211,7 +211,7 @@ pub fn encode(
         let claims_json = serde_json::to_vec(&claims)
             .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
         return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &claims_json, algorithm, &rsa_key)
+            sign_compact_with_cached_rsa(&header_json, &claims_json, algorithm, rsa_key)
         });
     }
 
@@ -518,7 +518,7 @@ pub fn encode_json(
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
         return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &payload_owned, algorithm, &rsa_key)
+            sign_compact_with_cached_rsa(&header_json, &payload_owned, algorithm, rsa_key)
         });
     }
 

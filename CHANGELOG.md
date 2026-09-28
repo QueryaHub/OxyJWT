@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the `rust_crypto` feature (used for the Linux aarch64 wheel) is unchanged.
   A malformed RSA private key is now rejected by `EncodingKey.from_rsa_pem`
   itself instead of by the first `encode` call. (#120)
+- **`EncodingKey` / `DecodingKey` no longer cloned on every `encode`/`decode`
+  call.** Both pyclasses are now `frozen`, and the native `encode`, `decode`
+  and `decode_complete` entry points borrow the underlying key material
+  straight out of the Python object instead of cloning it (an owned copy of
+  the DER/secret bytes, cloned again by `jsonwebtoken`'s signer/verifier
+  factory) on every call. HMAC secrets passed as raw `str`/`bytes` are
+  unaffected — there is no persistent key object to borrow from in that case.
+  No behavioural change. (#121)
 
 ## [0.7.0] — 2026-08-26
 
