@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrapper overhead over the native call dropped from ~0.85 microseconds to
   ~0.57 microseconds (~33% less); with no time claims at all, ~0.37
   microseconds (~57% less). No behavioural change. (#122)
+- **Common claim/header names are interned instead of allocated per
+  decode.** `json_to_bound` (used by every `decode` and `decode_complete`
+  call) used to allocate a fresh `PyString` for every dict key, including
+  the same standard names — `exp`, `iat`, `nbf`, `sub`, `aud`, `iss`, `jti`,
+  `alg`, `typ`, `kid` — on every single call. Those ten keys now come from
+  `pyo3::intern!`, a per-key cache that both skips the repeated allocation
+  and interns the string in CPython's own intern table, so a later
+  `payload.get("exp")` on the Python side can hit the identity-comparison
+  fast path for dict lookups. Any other key still gets an ordinary,
+  uninterned `PyString`, unchanged from before. Measured on an 8-claim
+  payload: native `decode` dropped from ~2.05 µs to ~1.92 µs (~6% less). No
+  behavioural change. (#123)
 
 ## [0.7.0] — 2026-08-26
 
