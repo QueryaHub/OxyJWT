@@ -115,40 +115,6 @@ def _check_string_or_iterable(value: object, name: str) -> None:
         raise TypeError(f"{name} must be a string, iterable or None")
 
 
-def _is_plain_decode(
-    options: dict[str, Any] | None,
-    verify: bool | None,
-    detached_payload: bytes | None,
-    audience: object,
-    issuer: object,
-    subject: str | None,
-    leeway: float | timedelta,
-    typ: str | None,
-    algorithms: list[str] | None,
-) -> bool:
-    """True when no argument changes the default verified-decode behaviour.
-
-    With nothing but ``algorithms`` supplied, Rust validates ``exp``/``nbf``
-    and has no audience/issuer/subject to check, so the remaining claim rules
-    reduce to :meth:`PyJWT._validate_claims_default`. A ``timedelta`` leeway
-    never compares equal to ``0`` and therefore takes the general path, as do
-    algorithm containers the native module cannot read directly (a set or an
-    iterator), which the general path normalises with ``list()``.
-    """
-    return (
-        options is None
-        and audience is None
-        and issuer is None
-        and subject is None
-        and typ is None
-        and detached_payload is None
-        and verify is None
-        and leeway == 0
-        and bool(algorithms)
-        and isinstance(algorithms, (list, tuple))
-    )
-
-
 def _json_default_from_encoder(encoder_cls: type[JSONEncoder]) -> Callable[[Any], Any]:
     enc = encoder_cls()
 
@@ -222,18 +188,47 @@ class PyJWT:
         typ: str | None = None,
         **kwargs: Any,
     ) -> Any:
+        # Inlined instead of a shared `_is_plain_decode` helper: this condition
+        # runs on every call, and a 9-argument function call costs more than
+        # the comparisons themselves. True when no argument changes the
+        # default verified-decode behaviour: with nothing but `algorithms`
+        # supplied, Rust validates exp/nbf and has no audience/issuer/subject
+        # to check, so the remaining claim rules reduce to
+        # `_validate_claims_default`. A `timedelta` leeway never compares
+        # equal to `0` and therefore takes the general path, as do algorithm
+        # containers the native module cannot read directly (a set or an
+        # iterator), which the general path normalises with `list()`.
         if (
             self._default_options
             and not kwargs
-            and _is_plain_decode(
-                options, verify, detached_payload, audience, issuer, subject, leeway,
-                typ, algorithms,
-            )
+            and options is None
+            and audience is None
+            and issuer is None
+            and subject is None
+            and typ is None
+            and detached_payload is None
+            and verify is None
+            and leeway == 0
+            and bool(algorithms)
+            and isinstance(algorithms, (list, tuple))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
-            _require_detached_payload_for_rfc7797(
-                token, detached_payload=None, verify_signature=True
-            )
+            # Inlined `_require_detached_payload_for_rfc7797` for the same
+            # reason: detached_payload/verify_signature are always None/True
+            # here, so its own early-return check is dead code on this path.
+            # ".." can only appear via an empty (b64:false) payload segment,
+            # since base64url never emits a dot; that keeps ordinary tokens
+            # off the split/header-parse path below.
+            if ".." in token:
+                segments = token.split(".", 2)
+                if len(segments) >= 3 and segments[1] == "":
+                    header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+                    if header_peek.get("b64") is False:
+                        raise DecodeError(
+                            'It is required that you pass in a value for the '
+                            '"detached_payload" argument to decode a message '
+                            "having the b64 header set to false."
+                        )
             payload = _oxyjwt.decode(token, key, algorithms)
             self._validate_claims_default(payload)
             return payload
@@ -275,18 +270,33 @@ class PyJWT:
         typ: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # See the matching block in `decode()` for why this is inlined rather
+        # than calling a shared `_is_plain_decode` / rfc7797-peek helper.
         if (
             self._default_options
             and not kwargs
-            and _is_plain_decode(
-                options, verify, detached_payload, audience, issuer, subject, leeway,
-                typ, algorithms,
-            )
+            and options is None
+            and audience is None
+            and issuer is None
+            and subject is None
+            and typ is None
+            and detached_payload is None
+            and verify is None
+            and leeway == 0
+            and bool(algorithms)
+            and isinstance(algorithms, (list, tuple))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
-            _require_detached_payload_for_rfc7797(
-                token, detached_payload=None, verify_signature=True
-            )
+            if ".." in token:
+                segments = token.split(".", 2)
+                if len(segments) >= 3 and segments[1] == "":
+                    header_peek = _as_plain_dict(_oxyjwt.get_unverified_header(token))
+                    if header_peek.get("b64") is False:
+                        raise DecodeError(
+                            'It is required that you pass in a value for the '
+                            '"detached_payload" argument to decode a message '
+                            "having the b64 header set to false."
+                        )
             payload, header, signature = _oxyjwt.decode_verified_complete(
                 token, key, algorithms
             )
@@ -454,30 +464,42 @@ class PyJWT:
         ``rust_standard_claims`` true: Rust already validated ``exp``/``nbf``,
         so only ``iat``, the Python ``exp`` boundary, the "no audience
         expected" rule and the ``sub`` type check remain.
+
+        ``exp`` is only re-checked here when it is not a plain ``int``. Rust
+        already enforced ``exp > now`` using an integer clock (leeway is 0 on
+        this path), and for an integer ``exp`` that is the exact same
+        predicate as the truncating check below, so redoing it would only
+        cost a ``time.time()`` call for no behavioural difference. A ``float``
+        ``exp`` still needs it: Rust rounds a fractional value to the nearest
+        second, while PyJWT (and the check below, for parity) truncates it,
+        so the two can disagree right at the boundary.
         """
-        now = time.time()
-
         iat = payload.get("iat", _MISSING)
-        if iat is not _MISSING:
-            try:
-                iat_value = int(iat)
-            except (ValueError, TypeError) as e:
-                raise InvalidIssuedAtError(
-                    "Issued At claim (iat) must be an integer."
-                ) from e
-            if iat_value > now:
-                raise ImmatureSignatureError("The token is not yet valid (iat)")
-
         exp = payload.get("exp", _MISSING)
-        if exp is not _MISSING:
-            try:
-                exp_value = int(exp)
-            except (ValueError, TypeError) as e:
-                raise DecodeError(
-                    "Expiration Time claim (exp) must be an integer."
-                ) from e
-            if exp_value <= now:
-                raise ExpiredSignatureError("Signature has expired")
+        exp_needs_check = exp is not _MISSING and type(exp) is not int
+
+        if iat is not _MISSING or exp_needs_check:
+            now = time.time()
+
+            if iat is not _MISSING:
+                try:
+                    iat_value = int(iat)
+                except (ValueError, TypeError) as e:
+                    raise InvalidIssuedAtError(
+                        "Issued At claim (iat) must be an integer."
+                    ) from e
+                if iat_value > now:
+                    raise ImmatureSignatureError("The token is not yet valid (iat)")
+
+            if exp_needs_check:
+                try:
+                    exp_value = int(exp)
+                except (ValueError, TypeError) as e:
+                    raise DecodeError(
+                        "Expiration Time claim (exp) must be an integer."
+                    ) from e
+                if exp_value <= now:
+                    raise ExpiredSignatureError("Signature has expired")
 
         if payload.get("aud"):
             raise InvalidAudienceError("Invalid audience")
