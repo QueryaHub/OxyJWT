@@ -4,6 +4,78 @@
 
 (No changes yet.)
 
+## 0.8.0 — 2026-09-28
+
+Performance release: cached RSA signing keys, borrowed (no longer cloned) key
+material, a lighter Python decode fast path, interned claim/header names, and
+skipped GIL release on the HMAC hot path. No intentional breaking changes to
+the public `__all__` surface. The API remains pre-1.0 (Beta). See
+[Versioning](versioning.md) and [`SECURITY.md` on GitHub](https://github.com/QueryaHub/OxyJWT/blob/main/SECURITY.md).
+
+### Upgrading from 0.7.0
+
+```bash
+pip install -U oxyjwt
+```
+
+- No intentional breaking changes to the public `__all__` surface.
+- One edge-case behaviour change: `decode_unverified` now accepts a header
+  that is valid JSON but not a recognized `alg` name (for example
+  `{"alg": "made-up"}`), matching `get_unverified_header`'s own, looser
+  check. Unverified decode was never a security boundary, so this only
+  affects inspecting an untrusted token's claims without checking its
+  signature.
+
+| Operation | Before | After | Change |
+| --- | --- | --- | --- |
+| RS256 `encode` (pre-built key) | 526 µs | 201 µs | 2.6× faster |
+| `encode`/`decode` (pre-built key, clone removed) | — | — | no measurable regression, fewer allocations |
+| `decode` wrapper overhead, `int` `exp` + `iat` | 0.85 µs | 0.57 µs | 33% less |
+| `decode` wrapper overhead, no time claims | 0.85 µs | 0.37 µs | 57% less |
+| native `decode`, 8-claim payload (key interning) | 2.05 µs | 1.92 µs | 6% less |
+| HS256 `decode`, 8 threads (no GIL release) | ~410k/s | ~790k/s | 1.9× more |
+| `get_unverified_header` | 384 ns | 352 ns | 8% less |
+| `decode_unverified` | 681 ns | 595 ns | 13% less |
+| `encode_json` | 787 ns | 666 ns | 15% less |
+
+### Changed
+
+- **RSA/RSA-PSS `encode` caches the parsed private key.** `EncodingKey.from_rsa_pem`
+  parses the DER-encoded key into an `aws_lc_rs` `RsaKeyPair` once, at
+  construction time, instead of `jsonwebtoken::crypto::sign` re-parsing (and
+  re-validating) it on every `encode` call. A malformed RSA private key is
+  now rejected by `EncodingKey.from_rsa_pem` itself instead of by the first
+  `encode` call. Only active with the default `aws_lc_rs` crypto backend;
+  the `rust_crypto` feature (Linux aarch64 wheel) is unchanged.
+- **`EncodingKey` / `DecodingKey` are no longer cloned on every `encode` /
+  `decode` call.** Both pyclasses are now `frozen`, so the native entry
+  points borrow the underlying key material directly instead of cloning it.
+  Raw `str` / `bytes` HMAC secrets are unaffected.
+- **Less Python-side work on the plain `decode` / `decode_complete` fast
+  path.** The argument checks that used to go through two extra function
+  calls are now inlined, and `exp` is only re-checked in Python when it is
+  not a plain `int` (Rust's own integer-clock check already covers that
+  case exactly; a `float` `exp` still gets the Python recheck for
+  boundary-rounding parity with PyJWT).
+- **Common claim / header names are interned** (`exp`, `iat`, `nbf`, `sub`,
+  `aud`, `iss`, `jti`, `alg`, `typ`, `kid`) instead of allocated fresh on
+  every decode.
+- **HMAC `encode` / `decode` no longer release the GIL.** HS256/384/512
+  sign/verify is fast enough that the release/reacquire cycle cost more
+  than the operation itself under thread contention. RSA, EC and EdDSA are
+  unaffected and keep releasing the GIL.
+- Removed several redundant allocations and re-parses on secondary
+  decode/encode paths (`get_unverified_header`, `decode_unverified`, the
+  unverified branch of `decode_complete`, and `encode_json`'s token
+  assembly).
+
+### Behaviour change
+
+- `decode_unverified` now accepts a header that is valid JSON but is not a
+  recognized `alg` name, aligning it with `get_unverified_header`. No other
+  unverified-decode method enforces `alg` recognition, and unverified
+  decode was never a security boundary.
+
 ## 0.7.0 — 2026-08-26
 
 Performance release. Verified `decode` is about **2.3× faster** and `encode` about
