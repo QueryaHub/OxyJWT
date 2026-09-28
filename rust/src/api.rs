@@ -2,7 +2,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use jsonwebtoken::errors::{new_error, ErrorKind};
 use jsonwebtoken::{
-    crypto::verify as jwt_crypto_verify, dangerous, encode as jwt_encode, DecodingKey, Header,
+    crypto::verify as jwt_crypto_verify, encode as jwt_encode, DecodingKey, Header,
 };
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -28,13 +28,6 @@ use aws_lc_rs::signature::{
     RsaEncoding, RsaKeyPair, RSA_PKCS1_SHA256, RSA_PKCS1_SHA384, RSA_PKCS1_SHA512, RSA_PSS_SHA256,
     RSA_PSS_SHA384, RSA_PSS_SHA512,
 };
-
-/// Size limit plus strict three-segment compact JWS check (before parsing).
-fn ensure_valid_compact_jwt(token: &str) -> PyResult<()> {
-    jws::split_compact_segments(token)
-        .map(|_| ())
-        .map_err(errors::decode_error)
-}
 
 /// Failure from a decode step that runs with the GIL released.
 ///
@@ -70,7 +63,15 @@ struct VerifiedToken {
     claims: Value,
 }
 
-/// Verify a compact JWT and parse it in a single pass.
+/// Verify a compact JWT and parse it in a single pass, optionally also
+/// returning the decoded signature bytes for callers that need them
+/// (`decode_complete`). `jwt_crypto_verify` already base64-decodes the
+/// signature segment internally to check it; when `with_signature` is set,
+/// this decodes it a second time to hand the bytes back, rather than making
+/// the caller re-split the whole token and decode the signature segment
+/// itself afterwards (as a separate `extract_signature_bytes` call used to).
+/// A second small, bounded decode of the signature segment alone is the
+/// trade-off for not re-scanning the (potentially much larger) full token.
 ///
 /// `jsonwebtoken::decode` parses the header twice and the payload twice (once
 /// for the caller's type, once for its internal validation struct) and returns
@@ -78,11 +79,12 @@ struct VerifiedToken {
 /// Doing the steps here keeps it to one header parse, one payload parse and one
 /// signature check, and lets us reuse the already-parsed header as the Python
 /// header dict.
-fn verify_and_parse(
+fn verify_and_parse_impl(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<VerifiedToken, DecodeFail> {
+    with_signature: bool,
+) -> Result<(VerifiedToken, Option<Vec<u8>>), DecodeFail> {
     let (header_segment, payload_segment, signature_segment) =
         jws::split_compact_segments(token).map_err(DecodeFail::Decode)?;
 
@@ -100,6 +102,11 @@ fn verify_and_parse(
         return Err(decode_fail(ErrorKind::InvalidSignature));
     }
 
+    let signature = with_signature
+        .then(|| URL_SAFE_NO_PAD.decode(signature_segment))
+        .transpose()
+        .map_err(|err| DecodeFail::Decode(err.to_string()))?;
+
     let payload = URL_SAFE_NO_PAD
         .decode(payload_segment)
         .map_err(|err| DecodeFail::Decode(err.to_string()))?;
@@ -113,7 +120,29 @@ fn verify_and_parse(
 
     claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
 
-    Ok(VerifiedToken { header, claims })
+    Ok((VerifiedToken { header, claims }, signature))
+}
+
+fn verify_and_parse(
+    token: &str,
+    decoding_key: &DecodingKey,
+    decode_validation: &DecodeValidation,
+) -> Result<VerifiedToken, DecodeFail> {
+    verify_and_parse_impl(token, decoding_key, decode_validation, false)
+        .map(|(verified, _)| verified)
+}
+
+fn verify_and_parse_with_signature(
+    token: &str,
+    decoding_key: &DecodingKey,
+    decode_validation: &DecodeValidation,
+) -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
+    let (verified, signature) =
+        verify_and_parse_impl(token, decoding_key, decode_validation, true)?;
+    Ok((
+        verified,
+        signature.expect("with_signature=true always returns Some"),
+    ))
 }
 
 fn header_algorithm(header: &Value) -> Result<jsonwebtoken::Algorithm, DecodeFail> {
@@ -164,6 +193,30 @@ where
     }
 }
 
+/// Length of URL-safe, unpadded base64 output for `n` input bytes.
+fn base64_len_no_pad(n: usize) -> usize {
+    (n / 3) * 4
+        + match n % 3 {
+            0 => 0,
+            1 => 2,
+            _ => 3,
+        }
+}
+
+/// Base64url-encode `header` and `payload` directly into one pre-sized
+/// `header.payload` string, instead of encoding each half into its own
+/// `String` (via `Engine::encode`) and then copying both of those into a
+/// third one with `format!`.
+fn signing_input_string(header: &[u8], payload: &[u8]) -> String {
+    let mut signing_input = String::with_capacity(
+        base64_len_no_pad(header.len()) + 1 + base64_len_no_pad(payload.len()),
+    );
+    URL_SAFE_NO_PAD.encode_string(header, &mut signing_input);
+    signing_input.push('.');
+    URL_SAFE_NO_PAD.encode_string(payload, &mut signing_input);
+    signing_input
+}
+
 /// The `aws_lc_rs` padding/digest scheme for an RSA/RSA-PSS algorithm.
 #[cfg(feature = "aws_lc_rs")]
 fn rsa_padding_for(algorithm: jsonwebtoken::Algorithm) -> &'static dyn RsaEncoding {
@@ -209,12 +262,11 @@ fn sign_compact_with_cached_rsa(
     algorithm: jsonwebtoken::Algorithm,
     key_pair: &RsaKeyPair,
 ) -> PyResult<String> {
-    let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
-    let payload_b64 = URL_SAFE_NO_PAD.encode(payload_json);
-    let signing_input = format!("{header_b64}.{payload_b64}");
-    let signature = sign_with_cached_rsa_key(key_pair, algorithm, signing_input.as_bytes())?;
-    let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
-    Ok(format!("{signing_input}.{signature_b64}"))
+    let mut token = signing_input_string(header_json, payload_json);
+    let signature = sign_with_cached_rsa_key(key_pair, algorithm, token.as_bytes())?;
+    token.push('.');
+    URL_SAFE_NO_PAD.encode_string(signature, &mut token);
+    Ok(token)
 }
 
 #[pyfunction]
@@ -343,15 +395,9 @@ pub fn decode_verified_complete(
     }
 
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
-    let (verified, signature) = maybe_detach(
-        py,
-        skip_detach,
-        || -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
-            let verified = verify_and_parse(token, &decoding_key, &decode_validation)?;
-            let signature = jws::extract_signature_bytes(token).map_err(DecodeFail::Decode)?;
-            Ok((verified, signature))
-        },
-    )
+    let (verified, signature) = maybe_detach(py, skip_detach, || {
+        verify_and_parse_with_signature(token, &decoding_key, &decode_validation)
+    })
     .map_err(map_decode_fail)?;
 
     let claims_py = json_to_py(py, &verified.claims)?;
@@ -418,10 +464,13 @@ fn decode_rfc7797_verified_complete(
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_valid_compact_jwt(token)?;
-    let token = token.to_owned();
+    // `parse_compact_header_json` already runs `split_compact_segments` (size
+    // cap + strict three-segment check); a separate `ensure_valid_compact_jwt`
+    // pre-check would just repeat that scan of the whole token. `token: &str`
+    // needs no `to_owned()` either: `py.detach` only requires the closure to
+    // be `Ungil` (`Send`), which a `&str` already is, not `'static`.
     let header = py
-        .detach(move || jws::parse_compact_header_json(&token))
+        .detach(move || jws::parse_compact_header_json(token))
         .map_err(errors::decode_error)?;
 
     json_to_py(py, &header)
@@ -429,13 +478,20 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    ensure_valid_compact_jwt(token)?;
-    let token = token.to_owned();
-    let token_data = py
-        .detach(move || dangerous::insecure_decode::<Value>(&token))
-        .map_err(errors::from_jwt_decode_error)?;
+    // `jsonwebtoken::dangerous::insecure_decode` re-implements its own
+    // lenient segment split (silently misparsing a token with extra `.`s
+    // rather than rejecting it) and, being generic over the return type,
+    // fully deserializes the header into `jsonwebtoken`'s own `Header`
+    // struct even though only `.claims` is ever read here. Reusing our own
+    // strict, single-pass `jws` helpers instead means one split (with our
+    // size cap and segment-count check), a JSON-object check on the header
+    // to reject a malformed one, and a payload parse -- with the header
+    // value itself never even converted to a Python object.
+    let claims = py
+        .detach(move || jws::parse_compact_claims_unverified(token))
+        .map_err(errors::decode_error)?;
 
-    json_to_py(py, &token_data.claims)
+    json_to_py(py, &claims)
 }
 
 fn apply_headers(
@@ -566,17 +622,11 @@ pub fn encode_json(
     let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
     maybe_detach(py, skip_detach, move || {
-        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        use base64::Engine;
-
-        let header_b64 = URL_SAFE_NO_PAD.encode(&header_json);
-        let payload_b64 = URL_SAFE_NO_PAD.encode(&payload_owned);
-        let signing_input = format!("{header_b64}.{payload_b64}");
-
-        let signature =
-            jsonwebtoken::crypto::sign(signing_input.as_bytes(), &encoding_key, algorithm)
-                .map_err(errors::from_jwt_encode_error)?;
-
-        Ok(format!("{signing_input}.{signature}"))
+        let mut token = signing_input_string(&header_json, &payload_owned);
+        let signature = jsonwebtoken::crypto::sign(token.as_bytes(), &encoding_key, algorithm)
+            .map_err(errors::from_jwt_encode_error)?;
+        token.push('.');
+        token.push_str(&signature);
+        Ok(token)
     })
 }

@@ -387,7 +387,7 @@ class PyJWT:
 
         lwf = _leeway_seconds(leeway)
         if not verify_signature:
-            _s, header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
+            header_obj, pld_bytes, sigb = _oxyjwt.jws_parse_compact(token)
             header = _as_plain_dict(header_obj)
             if detached_payload is not None:
                 pld_bytes = bytes(detached_payload)

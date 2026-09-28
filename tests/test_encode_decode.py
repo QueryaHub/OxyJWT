@@ -173,6 +173,37 @@ def test_decode_unverified_is_explicit() -> None:
     assert oxyjwt.decode_unverified(token)["sub"] == "user-123"
 
 
+def _b64u(data: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def test_decode_unverified_rejects_non_object_header() -> None:
+    """The header must still be a JSON object, even though its value is
+    never read: `decode_unverified` never parses the header into
+    `jsonwebtoken`'s typed `Header` struct, but still checks its shape.
+    """
+    header = _b64u(b"not-json-at-all")
+    payload = _b64u(orjson.dumps({"sub": "u"}))
+    token = f"{header}.{payload}.sig"
+    with pytest.raises(oxyjwt.DecodeError):
+        oxyjwt.decode_unverified(token)
+
+
+def test_decode_unverified_accepts_unrecognized_alg() -> None:
+    """`decode_unverified` only requires the header to be a JSON object,
+    matching `get_unverified_header`, not a recognized `alg` name: nothing
+    here is verified, so there is no security reason to be stricter about
+    the header than the sibling method that returns it.
+    """
+    header = _b64u(orjson.dumps({"alg": "made-up-alg", "typ": "JWT"}))
+    payload = _b64u(orjson.dumps({"sub": "u"}))
+    token = f"{header}.{payload}.sig"
+    assert oxyjwt.decode_unverified(token) == {"sub": "u"}
+    assert oxyjwt.get_unverified_header(token) == {"alg": "made-up-alg", "typ": "JWT"}
+
+
 def test_encode_deeply_nested_claims_rejected() -> None:
     nested: dict[str, object] = {"a": 1}
     current = nested
