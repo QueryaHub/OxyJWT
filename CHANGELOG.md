@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(No changes yet.)
+### Performance
+
+- **RSA/RSA-PSS `encode` no longer re-parses the private key on every call.**
+  `EncodingKey.from_rsa_pem` now parses the DER-encoded key into an
+  `aws_lc_rs::signature::RsaKeyPair` once, at construction time, and `encode`
+  signs through that cached key directly. Previously `jsonwebtoken::crypto::sign`
+  ran `RsaKeyPair::from_der` (including full RSA key validation) on every `encode`
+  call, which dominated the cost of signing. Measured with a pre-built
+  `EncodingKey` and a 2048-bit key: RS256 `encode` dropped from ~526 µs to
+  ~201 µs per call (~2.6× faster), now within ~5% of `cryptography`'s raw RSA
+  sign with an equivalent pre-parsed key. `decode`, and `encode`/`decode` for
+  HMAC, EC and EdDSA, are unaffected — those paths were already close to their
+  theoretical floor. Only active with the default `aws_lc_rs` crypto backend;
+  the `rust_crypto` feature (used for the Linux aarch64 wheel) is unchanged.
+  A malformed RSA private key is now rejected by `EncodingKey.from_rsa_pem`
+  itself instead of by the first `encode` call. (#120)
 
 ## [0.7.0] — 2026-08-26
 

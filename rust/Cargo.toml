@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 [features]
 default = ["aws_lc_rs"]
 rust_crypto = ["jsonwebtoken/rust_crypto"]
-aws_lc_rs = ["jsonwebtoken/aws_lc_rs"]
+aws_lc_rs = ["jsonwebtoken/aws_lc_rs", "dep:aws-lc-rs"]
 
 [dependencies]
 base64 = "0.22"
@@ -21,6 +21,12 @@ jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"
 pyo3 = { version = "0.28", features = ["abi3-py310"] }
 serde_json = "1"
 zeroize = "1"
+
+# Used directly (not just through jsonwebtoken) so RSA/RSA-PSS private keys can be
+# parsed once at `EncodingKey.from_rsa_pem` time and signed with repeatedly, instead
+# of jsonwebtoken re-parsing (and re-validating) the DER key on every `encode` call.
+# See rust/src/keys.rs and the `cached_rsa_*` helpers in rust/src/api.rs.
+aws-lc-rs = { version = "1", optional = true }
 
 # Release wheels are built once and then run in a hot path, so trade build time
 # for codegen quality. `panic = "abort"` is deliberately not set: PyO3 unwinds

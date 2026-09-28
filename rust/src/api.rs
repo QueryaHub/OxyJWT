@@ -18,6 +18,16 @@ use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation::{self, DecodeValidation};
 
+#[cfg(feature = "aws_lc_rs")]
+use crate::keys::cached_rsa_encoding_key_from_py;
+#[cfg(feature = "aws_lc_rs")]
+use aws_lc_rs::rand::SystemRandom;
+#[cfg(feature = "aws_lc_rs")]
+use aws_lc_rs::signature::{
+    RsaEncoding, RsaKeyPair, RSA_PKCS1_SHA256, RSA_PKCS1_SHA384, RSA_PKCS1_SHA512, RSA_PSS_SHA256,
+    RSA_PSS_SHA384, RSA_PSS_SHA512,
+};
+
 /// Size limit plus strict three-segment compact JWS check (before parsing).
 fn ensure_valid_compact_jwt(token: &str) -> PyResult<()> {
     jws::split_compact_segments(token)
@@ -123,6 +133,59 @@ fn ensure_single_family_for_decode(
         .map_err(|_| decode_fail(ErrorKind::InvalidAlgorithm))
 }
 
+/// The `aws_lc_rs` padding/digest scheme for an RSA/RSA-PSS algorithm.
+#[cfg(feature = "aws_lc_rs")]
+fn rsa_padding_for(algorithm: jsonwebtoken::Algorithm) -> &'static dyn RsaEncoding {
+    use jsonwebtoken::Algorithm;
+    match algorithm {
+        Algorithm::RS256 => &RSA_PKCS1_SHA256,
+        Algorithm::RS384 => &RSA_PKCS1_SHA384,
+        Algorithm::RS512 => &RSA_PKCS1_SHA512,
+        Algorithm::PS256 => &RSA_PSS_SHA256,
+        Algorithm::PS384 => &RSA_PSS_SHA384,
+        Algorithm::PS512 => &RSA_PSS_SHA512,
+        other => unreachable!(
+            "cached RSA signer requested for non-RSA algorithm {other:?}; \
+             cached_rsa_encoding_key_from_py only returns Some for RSA family keys"
+        ),
+    }
+}
+
+/// Sign `message` with an already-parsed RSA key, skipping the per-call
+/// `RsaKeyPair::from_der` parse (and key validation) that
+/// `jsonwebtoken::crypto::sign` would otherwise redo on every call. See #120.
+#[cfg(feature = "aws_lc_rs")]
+fn sign_with_cached_rsa_key(
+    key_pair: &RsaKeyPair,
+    algorithm: jsonwebtoken::Algorithm,
+    message: &[u8],
+) -> PyResult<Vec<u8>> {
+    let padding = rsa_padding_for(algorithm);
+    let mut signature = vec![0u8; key_pair.public_modulus_len()];
+    let rng = SystemRandom::new();
+    key_pair
+        .sign(padding, &rng, message, &mut signature)
+        .map_err(|_| errors::encode_error("failed to sign with RSA key"))?;
+    Ok(signature)
+}
+
+/// Build a compact JWS (`header.payload.signature`) from already base64url-ready
+/// JSON bytes, signing with a cached, pre-parsed RSA key.
+#[cfg(feature = "aws_lc_rs")]
+fn sign_compact_with_cached_rsa(
+    header_json: &[u8],
+    payload_json: &[u8],
+    algorithm: jsonwebtoken::Algorithm,
+    key_pair: &RsaKeyPair,
+) -> PyResult<String> {
+    let header_b64 = URL_SAFE_NO_PAD.encode(header_json);
+    let payload_b64 = URL_SAFE_NO_PAD.encode(payload_json);
+    let signing_input = format!("{header_b64}.{payload_b64}");
+    let signature = sign_with_cached_rsa_key(key_pair, algorithm, signing_input.as_bytes())?;
+    let signature_b64 = URL_SAFE_NO_PAD.encode(signature);
+    Ok(format!("{signing_input}.{signature_b64}"))
+}
+
 #[pyfunction]
 #[pyo3(signature = (payload, key, algorithm = "HS256", headers = None))]
 pub fn encode(
@@ -140,6 +203,18 @@ pub fn encode(
 
     let mut header = Header::new(algorithm);
     apply_headers(&mut header, headers, algorithm)?;
+
+    #[cfg(feature = "aws_lc_rs")]
+    if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
+        let header_json = serde_json::to_vec(&header)
+            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+        let claims_json = serde_json::to_vec(&claims)
+            .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
+        return py.detach(move || {
+            sign_compact_with_cached_rsa(&header_json, &claims_json, algorithm, &rsa_key)
+        });
+    }
+
     let encoding_key = encoding_key_from_py(key, algorithm)?;
 
     py.detach(|| jwt_encode(&header, &claims, &encoding_key))
@@ -434,12 +509,20 @@ pub fn encode_json(
     let algorithm = parse_algorithm(algorithm)?;
     let mut header = Header::new(algorithm);
     apply_headers(&mut header, headers, algorithm)?;
-    let encoding_key = encoding_key_from_py(key, algorithm)?;
 
     let header_json = serde_json::to_vec(&header)
         .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
 
     let payload_owned = payload_bytes.to_vec();
+
+    #[cfg(feature = "aws_lc_rs")]
+    if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
+        return py.detach(move || {
+            sign_compact_with_cached_rsa(&header_json, &payload_owned, algorithm, &rsa_key)
+        });
+    }
+
+    let encoding_key = encoding_key_from_py(key, algorithm)?;
 
     py.detach(move || {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
