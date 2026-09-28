@@ -57,6 +57,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uninterned `PyString`, unchanged from before. Measured on an 8-claim
   payload: native `decode` dropped from ~2.05 µs to ~1.92 µs (~6% less). No
   behavioural change. (#123)
+- **HMAC `encode`/`decode` no longer release the GIL.** `encode`,
+  `encode_json`, `decode` and `decode_complete` used to call `py.detach`
+  unconditionally, releasing and reacquiring the GIL around every native
+  call. For HS256/384/512 the signing/verification itself takes roughly a
+  microsecond, so under thread contention the release-and-reacquire cycle
+  cost as much as the operation, or more: measured with 8 threads
+  continuously decoding the same HS256 token, throughput went from ~410k to
+  ~790k decodes/sec (~1.9× more) once the release was skipped, and
+  single-threaded decode dropped from ~1.18 µs to ~1.15 µs. RSA, EC and
+  EdDSA are unaffected — the check is on the resolved algorithm (`encode`)
+  or on the caller's allow-list (`decode`, checked before the algorithm in
+  the token header is known: an HMAC-only allow-list already guarantees the
+  verified algorithm is HMAC too), and those algorithms still release the
+  GIL, confirmed to keep scaling with threads (RS256 decode: ~67k/sec on 1
+  thread, ~339k/sec on 8). No behavioural change; safe on free-threaded
+  Python 3.13t/3.14t since the HMAC path never calls back into Python
+  either way, so holding the GIL throughout is never a hazard, only a
+  choice not to release it. (#124)
 
 ## [0.7.0] — 2026-08-26
 
