@@ -8,9 +8,6 @@ use crate::claims;
 use crate::errors;
 
 #[cfg(feature = "aws_lc_rs")]
-use std::sync::Arc;
-
-#[cfg(feature = "aws_lc_rs")]
 use aws_lc_rs::signature::RsaKeyPair;
 
 #[derive(Debug)]
@@ -24,7 +21,7 @@ struct EncodingKeyMaterial {
     // `api::encode` / `api::encode_json` turns that per-call cost into a one-time
     // cost at key construction. See issue #120.
     #[cfg(feature = "aws_lc_rs")]
-    cached_rsa: Option<Arc<RsaKeyPair>>,
+    cached_rsa: Option<RsaKeyPair>,
 }
 
 #[derive(Debug)]
@@ -33,12 +30,19 @@ struct DecodingKeyMaterial {
     key: JwtDecodingKey,
 }
 
-#[pyclass(module = "oxyjwt._oxyjwt")]
+// `frozen` means Python cannot mutate the object after construction, so pyo3
+// hands out `&EncodingKey` / `&DecodingKey` via `Bound::get()` with no runtime
+// borrow-flag check, and that reference's lifetime is tied to the calling
+// scope rather than to a `PyRef` guard. `encoding_key_from_py` /
+// `decoding_key_from_py` use this to borrow the underlying key material
+// straight through to `py.detach` instead of cloning it on every
+// `encode`/`decode` call. See issue #121.
+#[pyclass(module = "oxyjwt._oxyjwt", frozen)]
 pub struct EncodingKey {
     material: EncodingKeyMaterial,
 }
 
-#[pyclass(module = "oxyjwt._oxyjwt")]
+#[pyclass(module = "oxyjwt._oxyjwt", frozen)]
 pub struct DecodingKey {
     material: DecodingKeyMaterial,
 }
@@ -62,7 +66,7 @@ impl EncodingKey {
         let key = JwtEncodingKey::from_rsa_pem(&bytes).map_err(errors::from_jwt_encode_error)?;
         #[cfg(feature = "aws_lc_rs")]
         let material = {
-            let cached_rsa = Arc::new(parse_cached_rsa_key_pair(key.inner())?);
+            let cached_rsa = parse_cached_rsa_key_pair(key.inner())?;
             EncodingKeyMaterial::new_rsa(key, cached_rsa)
         };
         #[cfg(not(feature = "aws_lc_rs"))]
@@ -180,7 +184,7 @@ impl EncodingKeyMaterial {
     }
 
     #[cfg(feature = "aws_lc_rs")]
-    fn new_rsa(key: JwtEncodingKey, cached_rsa: Arc<RsaKeyPair>) -> Self {
+    fn new_rsa(key: JwtEncodingKey, cached_rsa: RsaKeyPair) -> Self {
         Self {
             family: KeyFamily::Rsa,
             key,
@@ -188,18 +192,18 @@ impl EncodingKeyMaterial {
         }
     }
 
-    fn encoding_key(&self, algorithm: Algorithm) -> PyResult<JwtEncodingKey> {
+    fn encoding_key_ref(&self, algorithm: Algorithm) -> PyResult<&JwtEncodingKey> {
         ensure_algorithm_family(algorithm, self.family)?;
-        Ok(self.key.clone())
+        Ok(&self.key)
     }
 
     /// The pre-parsed RSA signing key, when `key` is an RSA/RSA-PSS `EncodingKey`
     /// and `algorithm` is compatible with it. `None` for every other key family,
-    /// in which case the caller falls back to `encoding_key` + `jsonwebtoken::crypto`.
+    /// in which case the caller falls back to `encoding_key_ref` + `jsonwebtoken::crypto`.
     #[cfg(feature = "aws_lc_rs")]
-    fn cached_rsa_signer(&self, algorithm: Algorithm) -> PyResult<Option<Arc<RsaKeyPair>>> {
+    fn cached_rsa_signer_ref(&self, algorithm: Algorithm) -> PyResult<Option<&RsaKeyPair>> {
         ensure_algorithm_family(algorithm, self.family)?;
-        Ok(self.cached_rsa.clone())
+        Ok(self.cached_rsa.as_ref())
     }
 }
 
@@ -221,18 +225,57 @@ impl DecodingKeyMaterial {
         Ok(())
     }
 
-    fn decoding_key(&self, algorithms: &[Algorithm]) -> PyResult<JwtDecodingKey> {
+    fn decoding_key_ref(&self, algorithms: &[Algorithm]) -> PyResult<&JwtDecodingKey> {
         self.validate_for_algorithms(algorithms)?;
-        Ok(self.key.clone())
+        Ok(&self.key)
     }
 }
 
-pub fn encoding_key_from_py(
-    key: &Bound<'_, PyAny>,
+/// Either a `JwtEncodingKey` borrowed straight out of a frozen `EncodingKey`
+/// pyclass (the common case: a pre-built typed key reused across calls), or
+/// one built on the spot from a raw HMAC secret. `Deref`s to `JwtEncodingKey`
+/// so call sites use it exactly like an owned key.
+pub enum BorrowedEncodingKey<'a> {
+    Ref(&'a JwtEncodingKey),
+    Owned(JwtEncodingKey),
+}
+
+impl std::ops::Deref for BorrowedEncodingKey<'_> {
+    type Target = JwtEncodingKey;
+
+    fn deref(&self) -> &JwtEncodingKey {
+        match self {
+            Self::Ref(key) => key,
+            Self::Owned(key) => key,
+        }
+    }
+}
+
+/// Same as [`BorrowedEncodingKey`] for `JwtDecodingKey`.
+pub enum BorrowedDecodingKey<'a> {
+    Ref(&'a JwtDecodingKey),
+    Owned(JwtDecodingKey),
+}
+
+impl std::ops::Deref for BorrowedDecodingKey<'_> {
+    type Target = JwtDecodingKey;
+
+    fn deref(&self) -> &JwtDecodingKey {
+        match self {
+            Self::Ref(key) => key,
+            Self::Owned(key) => key,
+        }
+    }
+}
+
+pub fn encoding_key_from_py<'a>(
+    key: &'a Bound<'_, PyAny>,
     algorithm: Algorithm,
-) -> PyResult<JwtEncodingKey> {
-    if let Ok(key_ref) = key.extract::<PyRef<'_, EncodingKey>>() {
-        return key_ref.material.encoding_key(algorithm);
+) -> PyResult<BorrowedEncodingKey<'a>> {
+    if let Ok(bound) = key.cast::<EncodingKey>() {
+        return Ok(BorrowedEncodingKey::Ref(
+            bound.get().material.encoding_key_ref(algorithm)?,
+        ));
     }
 
     if crate::algorithms::algorithm_family(algorithm) != KeyFamily::Hmac {
@@ -242,7 +285,9 @@ pub fn encoding_key_from_py(
     }
 
     let bytes = secret_bytes_from_py(key)?;
-    Ok(JwtEncodingKey::from_secret(bytes.as_ref()))
+    Ok(BorrowedEncodingKey::Owned(JwtEncodingKey::from_secret(
+        bytes.as_ref(),
+    )))
 }
 
 /// Parse a DER-encoded RSA private key into an `aws_lc_rs` `RsaKeyPair`, mapping
@@ -263,31 +308,33 @@ fn parse_cached_rsa_key_pair(der: &[u8]) -> PyResult<RsaKeyPair> {
 /// object (a raw HMAC secret): the caller falls back to `encoding_key_from_py`,
 /// which raises the appropriate error for that case.
 #[cfg(feature = "aws_lc_rs")]
-pub fn cached_rsa_encoding_key_from_py(
-    key: &Bound<'_, PyAny>,
+pub fn cached_rsa_encoding_key_from_py<'a>(
+    key: &'a Bound<'_, PyAny>,
     algorithm: Algorithm,
-) -> PyResult<Option<Arc<RsaKeyPair>>> {
-    match key.extract::<PyRef<'_, EncodingKey>>() {
-        Ok(key_ref) => key_ref.material.cached_rsa_signer(algorithm),
+) -> PyResult<Option<&'a RsaKeyPair>> {
+    match key.cast::<EncodingKey>() {
+        Ok(bound) => bound.get().material.cached_rsa_signer_ref(algorithm),
         Err(_) => Ok(None),
     }
 }
 
-pub fn decoding_key_from_py(
-    key: &Bound<'_, PyAny>,
+pub fn decoding_key_from_py<'a>(
+    key: &'a Bound<'_, PyAny>,
     algorithms: &[Algorithm],
-) -> PyResult<JwtDecodingKey> {
-    if let Ok(key_ref) = key.extract::<PyRef<'_, DecodingKey>>() {
-        return key_ref.material.decoding_key(algorithms);
+) -> PyResult<BorrowedDecodingKey<'a>> {
+    if let Ok(bound) = key.cast::<DecodingKey>() {
+        return Ok(BorrowedDecodingKey::Ref(
+            bound.get().material.decoding_key_ref(algorithms)?,
+        ));
     }
 
     raw_decoding_key_from_py(key, algorithms)
 }
 
-fn raw_decoding_key_from_py(
+fn raw_decoding_key_from_py<'a>(
     key: &Bound<'_, PyAny>,
     algorithms: &[Algorithm],
-) -> PyResult<JwtDecodingKey> {
+) -> PyResult<BorrowedDecodingKey<'a>> {
     let family = ensure_single_family(algorithms)?;
     if family != KeyFamily::Hmac {
         return Err(errors::invalid_key(
@@ -296,7 +343,9 @@ fn raw_decoding_key_from_py(
     }
 
     let bytes = secret_bytes_from_py(key)?;
-    Ok(JwtDecodingKey::from_secret(bytes.as_ref()))
+    Ok(BorrowedDecodingKey::Owned(JwtDecodingKey::from_secret(
+        bytes.as_ref(),
+    )))
 }
 
 /// Copy HMAC secret material from Python; buffer is zeroized on drop.
