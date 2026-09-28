@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import orjson
@@ -213,5 +214,28 @@ def test_custom_claim_key_is_not_interned() -> None:
     (key,) = payload.keys()
     assert key == custom_key
     assert key is not custom_key
+
+
+def test_hmac_encode_decode_are_thread_safe_without_gil_release() -> None:
+    """HS256 `encode`/`decode` no longer release the GIL around the native
+    call (see #124). That is purely a scheduling change on the Rust side, but
+    it is worth a concurrency regression test in its own right: each thread
+    must still get back exactly the token/payload it asked for, with no
+    cross-talk between threads sharing the same secret.
+    """
+    secret = "concurrent-hmac-secret-with-plenty-of-length"
+
+    def roundtrip(i: int) -> bool:
+        payload = {"sub": f"user-{i}", "n": i}
+        for _ in range(200):
+            token = oxyjwt.encode(payload, secret, "HS256")
+            decoded = oxyjwt.decode(token, secret, algorithms=["HS256"])
+            if decoded != payload:
+                return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(roundtrip, range(32)))
+    assert all(results)
 
 

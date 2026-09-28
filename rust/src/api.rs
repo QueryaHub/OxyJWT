@@ -9,7 +9,8 @@ use pyo3::types::PyBytes;
 use serde_json::Value;
 
 use crate::algorithms::{
-    algorithm_name, ensure_single_family, parse_algorithm, parse_algorithm_name,
+    algorithm_family, algorithm_name, ensure_single_family, parse_algorithm, parse_algorithm_name,
+    KeyFamily,
 };
 use crate::claims::{json_to_py, py_to_json_for_encode};
 use crate::claims_validate;
@@ -133,6 +134,36 @@ fn ensure_single_family_for_decode(
         .map_err(|_| decode_fail(ErrorKind::InvalidAlgorithm))
 }
 
+/// True when every algorithm in the allow-list is HMAC. Checked against the
+/// caller's allow-list rather than the algorithm actually used, because for
+/// `decode` the latter is only known after parsing the token header, which
+/// happens inside the (possibly GIL-attached) verification step itself; an
+/// HMAC-only allow-list already guarantees the verified algorithm is HMAC
+/// too (`ensure_single_family_for_decode` rejects a mixed-family list).
+fn algorithms_are_all_hmac(algorithms: &[jsonwebtoken::Algorithm]) -> bool {
+    algorithms
+        .iter()
+        .all(|algorithm| algorithm_family(*algorithm) == KeyFamily::Hmac)
+}
+
+/// Releases the GIL around `f` unless `skip_detach` is set, in which case `f`
+/// runs while still attached. HMAC sign/verify is fast enough (roughly a
+/// microsecond) that `py.detach`'s release-and-reacquire can cost as much as
+/// the operation itself, for negligible concurrency benefit on that single
+/// call; RSA/EC/EdDSA operations are one to several orders of magnitude
+/// slower and keep releasing the GIL unconditionally. See #124.
+fn maybe_detach<T, F>(py: Python<'_>, skip_detach: bool, f: F) -> T
+where
+    F: pyo3::marker::Ungil + FnOnce() -> T,
+    T: pyo3::marker::Ungil,
+{
+    if skip_detach {
+        f()
+    } else {
+        py.detach(f)
+    }
+}
+
 /// The `aws_lc_rs` padding/digest scheme for an RSA/RSA-PSS algorithm.
 #[cfg(feature = "aws_lc_rs")]
 fn rsa_padding_for(algorithm: jsonwebtoken::Algorithm) -> &'static dyn RsaEncoding {
@@ -216,9 +247,12 @@ pub fn encode(
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
+    let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
-    py.detach(|| jwt_encode(&header, &claims, &encoding_key))
-        .map_err(errors::from_jwt_encode_error)
+    maybe_detach(py, skip_detach, || {
+        jwt_encode(&header, &claims, &encoding_key)
+    })
+    .map_err(errors::from_jwt_encode_error)
 }
 
 #[pyfunction]
@@ -251,10 +285,12 @@ pub fn decode(
         algorithms, audience, issuer, subject, leeway, options, require,
     )?;
     let decoding_key = decoding_key_from_py(key, decode_validation.algorithms())?;
+    let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
 
-    let verified = py
-        .detach(|| verify_and_parse(token, &decoding_key, &decode_validation))
-        .map_err(map_decode_fail)?;
+    let verified = maybe_detach(py, skip_detach, || {
+        verify_and_parse(token, &decoding_key, &decode_validation)
+    })
+    .map_err(map_decode_fail)?;
 
     json_to_py(py, &verified.claims)
 }
@@ -306,13 +342,17 @@ pub fn decode_verified_complete(
         );
     }
 
-    let (verified, signature) = py
-        .detach(|| -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
+    let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
+    let (verified, signature) = maybe_detach(
+        py,
+        skip_detach,
+        || -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
             let verified = verify_and_parse(token, &decoding_key, &decode_validation)?;
             let signature = jws::extract_signature_bytes(token).map_err(DecodeFail::Decode)?;
             Ok((verified, signature))
-        })
-        .map_err(map_decode_fail)?;
+        },
+    )
+    .map_err(map_decode_fail)?;
 
     let claims_py = json_to_py(py, &verified.claims)?;
     let header_py = json_to_py(py, &verified.header)?;
@@ -334,41 +374,41 @@ fn decode_rfc7797_verified_complete(
         )));
     }
 
-    let (parts, claims, signature) = py
-        .detach(|| -> Result<_, DecodeFail> {
-            let parts = jws::parse_rfc7797_compact(token).map_err(DecodeFail::Token)?;
-            let claims: Value = serde_json::from_slice(detached_payload)
-                .map_err(|err| DecodeFail::Decode(format!("Invalid payload string: {err}")))?;
-            if !claims.is_object() {
-                return Err(DecodeFail::Decode(
-                    "Invalid payload string: must be a json object".to_owned(),
-                ));
-            }
+    let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
+    let (parts, claims, signature) = maybe_detach(py, skip_detach, || -> Result<_, DecodeFail> {
+        let parts = jws::parse_rfc7797_compact(token).map_err(DecodeFail::Token)?;
+        let claims: Value = serde_json::from_slice(detached_payload)
+            .map_err(|err| DecodeFail::Decode(format!("Invalid payload string: {err}")))?;
+        if !claims.is_object() {
+            return Err(DecodeFail::Decode(
+                "Invalid payload string: must be a json object".to_owned(),
+            ));
+        }
 
-            let algorithm = header_algorithm(&parts.header)?;
-            if !decode_validation.algorithms().contains(&algorithm) {
-                return Err(decode_fail(ErrorKind::InvalidAlgorithm));
-            }
-            ensure_single_family_for_decode(decode_validation.algorithms())?;
+        let algorithm = header_algorithm(&parts.header)?;
+        if !decode_validation.algorithms().contains(&algorithm) {
+            return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+        }
+        ensure_single_family_for_decode(decode_validation.algorithms())?;
 
-            let signing_input = jws::signing_input_rfc7797(&parts.header_segment, detached_payload);
-            if !jwt_crypto_verify(
-                &parts.signature_segment,
-                &signing_input,
-                decoding_key,
-                algorithm,
-            )? {
-                return Err(decode_fail(ErrorKind::InvalidSignature));
-            }
+        let signing_input = jws::signing_input_rfc7797(&parts.header_segment, detached_payload);
+        if !jwt_crypto_verify(
+            &parts.signature_segment,
+            &signing_input,
+            decoding_key,
+            algorithm,
+        )? {
+            return Err(decode_fail(ErrorKind::InvalidSignature));
+        }
 
-            claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
+        claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
 
-            let signature = URL_SAFE_NO_PAD
-                .decode(&parts.signature_segment)
-                .map_err(|err| DecodeFail::Decode(err.to_string()))?;
-            Ok((parts, claims, signature))
-        })
-        .map_err(map_decode_fail)?;
+        let signature = URL_SAFE_NO_PAD
+            .decode(&parts.signature_segment)
+            .map_err(|err| DecodeFail::Decode(err.to_string()))?;
+        Ok((parts, claims, signature))
+    })
+    .map_err(map_decode_fail)?;
 
     let header_py = json_to_py(py, &parts.header)?;
     let claims_py = json_to_py(py, &claims)?;
@@ -523,8 +563,9 @@ pub fn encode_json(
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
+    let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
-    py.detach(move || {
+    maybe_detach(py, skip_detach, move || {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
 
