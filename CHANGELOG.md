@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   factory) on every call. HMAC secrets passed as raw `str`/`bytes` are
   unaffected — there is no persistent key object to borrow from in that case.
   No behavioural change. (#121)
+- **Less Python-side work on the plain `decode`/`decode_complete` fast path.**
+  The `_is_plain_decode` argument check and the RFC 7797 `detached_payload`
+  pre-check are now inlined into `decode`/`decode_complete` instead of going
+  through a 9-argument and a keyword-argument function call. `exp` is only
+  re-checked in Python when it is not a plain `int`: Rust already enforces
+  `exp > now` with an integer clock on this path, which is the exact same
+  predicate for an integer `exp`, so re-running it only cost a `time.time()`
+  call with no behavioural difference; a `float` `exp` still gets the Python
+  recheck, since Rust rounds a fractional value to the nearest second where
+  PyJWT (and this check, for parity) truncates it, and the two can disagree
+  right at the boundary. Measured (HS256, prebuilt token, `int` `exp`):
+  wrapper overhead over the native call dropped from ~0.85 microseconds to
+  ~0.57 microseconds (~33% less); with no time claims at all, ~0.37
+  microseconds (~57% less). No behavioural change. (#122)
 
 ## [0.7.0] — 2026-08-26
 
