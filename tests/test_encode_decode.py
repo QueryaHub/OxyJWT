@@ -183,3 +183,35 @@ def test_encode_deeply_nested_claims_rejected() -> None:
         oxyjwt._oxyjwt.encode(nested, "secret", "HS256")
 
 
+@pytest.mark.parametrize("claim", ["exp", "iat", "nbf", "sub", "aud", "iss", "jti"])
+def test_standard_claim_key_is_interned(claim: str) -> None:
+    """A standard claim name comes back as the same interned `str` object
+    pyo3 caches for it, matching a same-spelling literal by identity (`is`)
+    rather than just equality.
+    """
+    token = oxyjwt.encode({claim: "v"}, "secret", "HS256")
+    payload = oxyjwt.decode_unverified(token)
+    (key,) = payload.keys()
+    assert key is claim
+
+
+@pytest.mark.parametrize("field", ["alg", "typ", "kid"])
+def test_standard_header_key_is_interned(field: str) -> None:
+    token = oxyjwt.encode({"sub": "u"}, "secret", "HS256", headers={"kid": "k1"})
+    header = oxyjwt.get_unverified_header(token)
+    (key,) = (k for k in header if k == field)
+    assert key is field
+
+
+def test_custom_claim_key_is_not_interned() -> None:
+    """A key outside the standard list must still decode correctly, as an
+    ordinary (uninterned) `str` rather than being pulled from the cache.
+    """
+    custom_key = "a_custom_claim"
+    token = oxyjwt.encode({custom_key: "v"}, "secret", "HS256")
+    payload = oxyjwt.decode_unverified(token)
+    (key,) = payload.keys()
+    assert key == custom_key
+    assert key is not custom_key
+
+
