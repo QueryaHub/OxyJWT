@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::errors;
 
-type CompactJwsParts = (Vec<u8>, Value, Vec<u8>, Vec<u8>);
+type CompactJwsParts = (Value, Vec<u8>, Vec<u8>);
 
 /// Maximum compact serialization size (`header.payload.signature`) before parsing.
 pub const MAX_COMPACT_JWT_BYTES: usize = 256 * 1024;
@@ -136,39 +136,48 @@ pub fn signing_input_rfc7797(header_segment: &str, payload: &[u8]) -> Vec<u8> {
     signing_input
 }
 
-/// Returns `(signing_input bytes, header JSON object, raw payload bytes, signature bytes)`.
+/// Returns `(header JSON object, raw payload bytes, signature bytes)`.
+///
+/// Does not compute the `header.payload` signing input: `jws_parse_compact`'s
+/// only Python caller (the `decode_complete(verify_signature=False)` path in
+/// `api_jwt.py`) never used it, so returning it was a wasted `Vec<u8>` clone
+/// of the token's own bytes on every unverified `decode_complete` call.
 pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
     let (h, p, s) = split_compact_segments(token)?;
-    let signing_input_len = h.len().saturating_add(1).saturating_add(p.len());
-    let signing_input = token.as_bytes()[..signing_input_len].to_vec();
     let header = decode_header_json(h)?;
     let payload_bytes = URL_SAFE_NO_PAD.decode(p).map_err(|e| e.to_string())?;
     let signature_bytes = URL_SAFE_NO_PAD.decode(s).map_err(|e| e.to_string())?;
-    Ok((signing_input, header, payload_bytes, signature_bytes))
+    Ok((header, payload_bytes, signature_bytes))
 }
 
-/// Extract and decode the JWS signature segment without parsing header or payload JSON.
-pub fn extract_signature_bytes(token: &str) -> Result<Vec<u8>, String> {
-    let (_, _, sig_encoded) = split_compact_segments(token)?;
-    URL_SAFE_NO_PAD
-        .decode(sig_encoded)
-        .map_err(|e| e.to_string())
+/// Decode only the claims (payload) segment of a compact JWT, for the
+/// module-level `decode_unverified`, which never looks at the header or
+/// signature: no reason to spend a JSON parse (or a base64 decode, for the
+/// signature) on either. Still runs `split_compact_segments`, so the same
+/// size cap and strict three-segment check apply as everywhere else; the
+/// header is parsed as JSON only to reject a malformed one, matching
+/// `get_unverified_header`'s validation, then discarded.
+pub fn parse_compact_claims_unverified(token: &str) -> Result<Value, String> {
+    let (header_segment, payload_segment, _) = split_compact_segments(token)?;
+    decode_header_json(header_segment)?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|e| e.to_string())?;
+    serde_json::from_slice(&payload).map_err(|e| e.to_string())
 }
 
-type JwsParseOutput = (Py<PyBytes>, Py<PyAny>, Py<PyBytes>, Py<PyBytes>);
+type JwsParseOutput = (Py<PyAny>, Py<PyBytes>, Py<PyBytes>);
 
 #[pyfunction]
 pub fn jws_parse_compact(py: Python<'_>, token: &str) -> PyResult<JwsParseOutput> {
-    let token = token.to_owned();
-    let (signing_input, header, payload, signature) = py
-        .detach(move || parse_compact_jws(&token))
+    let (header, payload, signature) = py
+        .detach(move || parse_compact_jws(token))
         .map_err(errors::decode_error)?;
     use crate::claims::json_to_py;
     let header_obj = json_to_py(py, &header)?;
-    let signing = PyBytes::new(py, &signing_input);
     let pld = PyBytes::new(py, &payload);
     let sigb = PyBytes::new(py, &signature);
-    Ok((signing.into(), header_obj, pld.into(), sigb.into()))
+    Ok((header_obj, pld.into(), sigb.into()))
 }
 
 #[cfg(test)]
@@ -201,23 +210,32 @@ mod tests {
             "Too many segments"
         );
         assert_eq!(parse_compact_jws(token).unwrap_err(), "Too many segments");
+        assert_eq!(
+            parse_compact_claims_unverified(token).unwrap_err(),
+            "Too many segments"
+        );
     }
 
     #[test]
-    fn borrowed_signing_input_matches_owned_parse() {
+    fn signing_input_of_matches_token_prefix() {
         let token =
             "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
         let (h, p, _) = split_compact_segments(token).expect("split");
-        let (owned, _, _, _) = parse_compact_jws(token).expect("parse");
-        assert_eq!(signing_input_of(token, h, p), owned.as_slice());
+        assert_eq!(
+            signing_input_of(token, h, p),
+            b"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0".as_slice()
+        );
     }
 
     #[test]
-    fn extract_signature_matches_full_parse() {
+    fn claims_unverified_matches_full_parse_payload() {
         let token =
             "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-        let (_, _, _, full_sig) = parse_compact_jws(token).expect("parse");
-        let extracted = extract_signature_bytes(token).expect("extract");
-        assert_eq!(full_sig, extracted);
+        let (_, payload, _) = parse_compact_jws(token).expect("parse");
+        let claims: Value = serde_json::from_slice(&payload).expect("payload is json");
+        assert_eq!(
+            claims,
+            parse_compact_claims_unverified(token).expect("claims")
+        );
     }
 }

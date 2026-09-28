@@ -75,6 +75,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Python 3.13t/3.14t since the HMAC path never calls back into Python
   either way, so holding the GIL throughout is never a hazard, only a
   choice not to release it. (#124)
+- **Removed several small redundant allocations and re-parses on secondary
+  decode/encode paths.** None of these are on the main verified `decode`
+  hot path (already addressed by earlier entries in this section); each is
+  a modest, measured win on its own function:
+  - `get_unverified_header` no longer copies the token into an owned
+    `String` before `py.detach` (a borrowed `&str` is `Ungil` already; no
+    `'static` bound requires the copy) and no longer runs its own
+    `split_compact_segments` pre-check before `parse_compact_header_json`
+    runs the exact same split internally. ~384 ns → ~352 ns.
+  - `decode_unverified` used `jsonwebtoken::dangerous::insecure_decode`,
+    which fully deserializes the header into `jsonwebtoken`'s typed
+    `Header` struct even though only `.claims` was ever read, and
+    re-implements its own lenient segment split (silently misparsing a
+    token with extra `.`s instead of rejecting it, unlike our own
+    `split_compact_segments`) -- on top of the same redundant pre-check as
+    `get_unverified_header`. Replaced with a single-pass helper that
+    reuses our own strict split and only parses the header far enough to
+    confirm it is a JSON object (matching `get_unverified_header`'s own
+    check) before discarding it. ~681 ns → ~595 ns.
+  - `decode_complete`'s unverified path (`jws_parse_compact`) computed and
+    returned a `header.payload` "signing input" byte string that its only
+    Python caller immediately discarded; it no longer computes it at all.
+    ~787 ns → ~666 ns for the `encode_json` counterpart exercised by the
+    same benchmark payload (the byte-building change below); the
+    `decode_complete(verify_signature=False)` path itself is dominated by
+    Python-side claim validation, so the native saving there is smaller
+    (~2580 ns → ~2500 ns end to end).
+  - `decode_complete` (verified path) decoded the signature segment's
+    base64 a second time via a separate `extract_signature_bytes` call,
+    which re-split the *entire* token from scratch to reach it. It now
+    decodes the signature once, inline, right where the token is already
+    split for verification -- removing the redundant full re-split;
+    `jsonwebtoken`'s `crypto::verify` still does its own internal base64
+    decode of just the (small, bounded) signature segment, since it has
+    no public entry point that accepts already-decoded signature bytes.
+  - `encode_json` (and the RSA fast path shared with `encode`) built the
+    `header.payload.signature` token through a chain of `Engine::encode`
+    calls into throwaway `String`s and two `format!`s, each copying
+    everything built so far into a new allocation. It now encodes header
+    and payload directly into one pre-sized `String` and appends the
+    signature to the same buffer, so the whole token is built with (at
+    most) one buffer growth instead of several full copies. ~787 ns →
+    ~666 ns.
+
+  No behavioural change, other than `decode_unverified` becoming slightly
+  *more* lenient in one narrow, untested edge case: a token whose header is
+  valid JSON but not a recognized `alg` name (e.g. `{"alg": "made-up"}`)
+  now decodes instead of raising, aligning it with `get_unverified_header`
+  -- which already only required the header to be a JSON object -- rather
+  than `jsonwebtoken`'s stricter typed deserialization, which no other
+  method in this library performs for an *unverified* decode. (#125)
 
 ## [0.7.0] — 2026-08-26
 
