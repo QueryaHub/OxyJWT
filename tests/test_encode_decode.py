@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import orjson
@@ -172,6 +173,37 @@ def test_decode_unverified_is_explicit() -> None:
     assert oxyjwt.decode_unverified(token)["sub"] == "user-123"
 
 
+def _b64u(data: bytes) -> str:
+    import base64
+
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def test_decode_unverified_rejects_non_object_header() -> None:
+    """The header must still be a JSON object, even though its value is
+    never read: `decode_unverified` never parses the header into
+    `jsonwebtoken`'s typed `Header` struct, but still checks its shape.
+    """
+    header = _b64u(b"not-json-at-all")
+    payload = _b64u(orjson.dumps({"sub": "u"}))
+    token = f"{header}.{payload}.sig"
+    with pytest.raises(oxyjwt.DecodeError):
+        oxyjwt.decode_unverified(token)
+
+
+def test_decode_unverified_accepts_unrecognized_alg() -> None:
+    """`decode_unverified` only requires the header to be a JSON object,
+    matching `get_unverified_header`, not a recognized `alg` name: nothing
+    here is verified, so there is no security reason to be stricter about
+    the header than the sibling method that returns it.
+    """
+    header = _b64u(orjson.dumps({"alg": "made-up-alg", "typ": "JWT"}))
+    payload = _b64u(orjson.dumps({"sub": "u"}))
+    token = f"{header}.{payload}.sig"
+    assert oxyjwt.decode_unverified(token) == {"sub": "u"}
+    assert oxyjwt.get_unverified_header(token) == {"alg": "made-up-alg", "typ": "JWT"}
+
+
 def test_encode_deeply_nested_claims_rejected() -> None:
     nested: dict[str, object] = {"a": 1}
     current = nested
@@ -181,5 +213,60 @@ def test_encode_deeply_nested_claims_rejected() -> None:
         current = next_dict
     with pytest.raises(oxyjwt.EncodeError, match="maximum recursion depth"):
         oxyjwt._oxyjwt.encode(nested, "secret", "HS256")
+
+
+@pytest.mark.parametrize("claim", ["exp", "iat", "nbf", "sub", "aud", "iss", "jti"])
+def test_standard_claim_key_is_interned(claim: str) -> None:
+    """A standard claim name comes back as the same interned `str` object
+    pyo3 caches for it, matching a same-spelling literal by identity (`is`)
+    rather than just equality.
+    """
+    token = oxyjwt.encode({claim: "v"}, "secret", "HS256")
+    payload = oxyjwt.decode_unverified(token)
+    (key,) = payload.keys()
+    assert key is claim
+
+
+@pytest.mark.parametrize("field", ["alg", "typ", "kid"])
+def test_standard_header_key_is_interned(field: str) -> None:
+    token = oxyjwt.encode({"sub": "u"}, "secret", "HS256", headers={"kid": "k1"})
+    header = oxyjwt.get_unverified_header(token)
+    (key,) = (k for k in header if k == field)
+    assert key is field
+
+
+def test_custom_claim_key_is_not_interned() -> None:
+    """A key outside the standard list must still decode correctly, as an
+    ordinary (uninterned) `str` rather than being pulled from the cache.
+    """
+    custom_key = "a_custom_claim"
+    token = oxyjwt.encode({custom_key: "v"}, "secret", "HS256")
+    payload = oxyjwt.decode_unverified(token)
+    (key,) = payload.keys()
+    assert key == custom_key
+    assert key is not custom_key
+
+
+def test_hmac_encode_decode_are_thread_safe_without_gil_release() -> None:
+    """HS256 `encode`/`decode` no longer release the GIL around the native
+    call (see #124). That is purely a scheduling change on the Rust side, but
+    it is worth a concurrency regression test in its own right: each thread
+    must still get back exactly the token/payload it asked for, with no
+    cross-talk between threads sharing the same secret.
+    """
+    secret = "concurrent-hmac-secret-with-plenty-of-length"
+
+    def roundtrip(i: int) -> bool:
+        payload = {"sub": f"user-{i}", "n": i}
+        for _ in range(200):
+            token = oxyjwt.encode(payload, secret, "HS256")
+            decoded = oxyjwt.decode(token, secret, algorithms=["HS256"])
+            if decoded != payload:
+                return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(roundtrip, range(32)))
+    assert all(results)
 
 

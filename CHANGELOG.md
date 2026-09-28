@@ -9,6 +9,128 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 (No changes yet.)
 
+## [0.8.0] — 2026-09-28
+
+### Performance
+
+- **RSA/RSA-PSS `encode` no longer re-parses the private key on every call.**
+  `EncodingKey.from_rsa_pem` now parses the DER-encoded key into an
+  `aws_lc_rs::signature::RsaKeyPair` once, at construction time, and `encode`
+  signs through that cached key directly. Previously `jsonwebtoken::crypto::sign`
+  ran `RsaKeyPair::from_der` (including full RSA key validation) on every `encode`
+  call, which dominated the cost of signing. Measured with a pre-built
+  `EncodingKey` and a 2048-bit key: RS256 `encode` dropped from ~526 µs to
+  ~201 µs per call (~2.6× faster), now within ~5% of `cryptography`'s raw RSA
+  sign with an equivalent pre-parsed key. `decode`, and `encode`/`decode` for
+  HMAC, EC and EdDSA, are unaffected — those paths were already close to their
+  theoretical floor. Only active with the default `aws_lc_rs` crypto backend;
+  the `rust_crypto` feature (used for the Linux aarch64 wheel) is unchanged.
+  A malformed RSA private key is now rejected by `EncodingKey.from_rsa_pem`
+  itself instead of by the first `encode` call. (#120)
+- **`EncodingKey` / `DecodingKey` no longer cloned on every `encode`/`decode`
+  call.** Both pyclasses are now `frozen`, and the native `encode`, `decode`
+  and `decode_complete` entry points borrow the underlying key material
+  straight out of the Python object instead of cloning it (an owned copy of
+  the DER/secret bytes, cloned again by `jsonwebtoken`'s signer/verifier
+  factory) on every call. HMAC secrets passed as raw `str`/`bytes` are
+  unaffected — there is no persistent key object to borrow from in that case.
+  No behavioural change. (#121)
+- **Less Python-side work on the plain `decode`/`decode_complete` fast path.**
+  The `_is_plain_decode` argument check and the RFC 7797 `detached_payload`
+  pre-check are now inlined into `decode`/`decode_complete` instead of going
+  through a 9-argument and a keyword-argument function call. `exp` is only
+  re-checked in Python when it is not a plain `int`: Rust already enforces
+  `exp > now` with an integer clock on this path, which is the exact same
+  predicate for an integer `exp`, so re-running it only cost a `time.time()`
+  call with no behavioural difference; a `float` `exp` still gets the Python
+  recheck, since Rust rounds a fractional value to the nearest second where
+  PyJWT (and this check, for parity) truncates it, and the two can disagree
+  right at the boundary. Measured (HS256, prebuilt token, `int` `exp`):
+  wrapper overhead over the native call dropped from ~0.85 microseconds to
+  ~0.57 microseconds (~33% less); with no time claims at all, ~0.37
+  microseconds (~57% less). No behavioural change. (#122)
+- **Common claim/header names are interned instead of allocated per
+  decode.** `json_to_bound` (used by every `decode` and `decode_complete`
+  call) used to allocate a fresh `PyString` for every dict key, including
+  the same standard names — `exp`, `iat`, `nbf`, `sub`, `aud`, `iss`, `jti`,
+  `alg`, `typ`, `kid` — on every single call. Those ten keys now come from
+  `pyo3::intern!`, a per-key cache that both skips the repeated allocation
+  and interns the string in CPython's own intern table, so a later
+  `payload.get("exp")` on the Python side can hit the identity-comparison
+  fast path for dict lookups. Any other key still gets an ordinary,
+  uninterned `PyString`, unchanged from before. Measured on an 8-claim
+  payload: native `decode` dropped from ~2.05 µs to ~1.92 µs (~6% less). No
+  behavioural change. (#123)
+- **HMAC `encode`/`decode` no longer release the GIL.** `encode`,
+  `encode_json`, `decode` and `decode_complete` used to call `py.detach`
+  unconditionally, releasing and reacquiring the GIL around every native
+  call. For HS256/384/512 the signing/verification itself takes roughly a
+  microsecond, so under thread contention the release-and-reacquire cycle
+  cost as much as the operation, or more: measured with 8 threads
+  continuously decoding the same HS256 token, throughput went from ~410k to
+  ~790k decodes/sec (~1.9× more) once the release was skipped, and
+  single-threaded decode dropped from ~1.18 µs to ~1.15 µs. RSA, EC and
+  EdDSA are unaffected — the check is on the resolved algorithm (`encode`)
+  or on the caller's allow-list (`decode`, checked before the algorithm in
+  the token header is known: an HMAC-only allow-list already guarantees the
+  verified algorithm is HMAC too), and those algorithms still release the
+  GIL, confirmed to keep scaling with threads (RS256 decode: ~67k/sec on 1
+  thread, ~339k/sec on 8). No behavioural change; safe on free-threaded
+  Python 3.13t/3.14t since the HMAC path never calls back into Python
+  either way, so holding the GIL throughout is never a hazard, only a
+  choice not to release it. (#124)
+- **Removed several small redundant allocations and re-parses on secondary
+  decode/encode paths.** None of these are on the main verified `decode`
+  hot path (already addressed by earlier entries in this section); each is
+  a modest, measured win on its own function:
+  - `get_unverified_header` no longer copies the token into an owned
+    `String` before `py.detach` (a borrowed `&str` is `Ungil` already; no
+    `'static` bound requires the copy) and no longer runs its own
+    `split_compact_segments` pre-check before `parse_compact_header_json`
+    runs the exact same split internally. ~384 ns → ~352 ns.
+  - `decode_unverified` used `jsonwebtoken::dangerous::insecure_decode`,
+    which fully deserializes the header into `jsonwebtoken`'s typed
+    `Header` struct even though only `.claims` was ever read, and
+    re-implements its own lenient segment split (silently misparsing a
+    token with extra `.`s instead of rejecting it, unlike our own
+    `split_compact_segments`) -- on top of the same redundant pre-check as
+    `get_unverified_header`. Replaced with a single-pass helper that
+    reuses our own strict split and only parses the header far enough to
+    confirm it is a JSON object (matching `get_unverified_header`'s own
+    check) before discarding it. ~681 ns → ~595 ns.
+  - `decode_complete`'s unverified path (`jws_parse_compact`) computed and
+    returned a `header.payload` "signing input" byte string that its only
+    Python caller immediately discarded; it no longer computes it at all.
+    ~787 ns → ~666 ns for the `encode_json` counterpart exercised by the
+    same benchmark payload (the byte-building change below); the
+    `decode_complete(verify_signature=False)` path itself is dominated by
+    Python-side claim validation, so the native saving there is smaller
+    (~2580 ns → ~2500 ns end to end).
+  - `decode_complete` (verified path) decoded the signature segment's
+    base64 a second time via a separate `extract_signature_bytes` call,
+    which re-split the *entire* token from scratch to reach it. It now
+    decodes the signature once, inline, right where the token is already
+    split for verification -- removing the redundant full re-split;
+    `jsonwebtoken`'s `crypto::verify` still does its own internal base64
+    decode of just the (small, bounded) signature segment, since it has
+    no public entry point that accepts already-decoded signature bytes.
+  - `encode_json` (and the RSA fast path shared with `encode`) built the
+    `header.payload.signature` token through a chain of `Engine::encode`
+    calls into throwaway `String`s and two `format!`s, each copying
+    everything built so far into a new allocation. It now encodes header
+    and payload directly into one pre-sized `String` and appends the
+    signature to the same buffer, so the whole token is built with (at
+    most) one buffer growth instead of several full copies. ~787 ns →
+    ~666 ns.
+
+  No behavioural change, other than `decode_unverified` becoming slightly
+  *more* lenient in one narrow, untested edge case: a token whose header is
+  valid JSON but not a recognized `alg` name (e.g. `{"alg": "made-up"}`)
+  now decodes instead of raising, aligning it with `get_unverified_header`
+  -- which already only required the header to be a JSON object -- rather
+  than `jsonwebtoken`'s stricter typed deserialization, which no other
+  method in this library performs for an *unverified* decode. (#125)
+
 ## [0.7.0] — 2026-08-26
 
 Performance release. Verified `decode` is about **2.3× faster** and `encode` about
@@ -303,7 +425,8 @@ Initial alpha release.
 - Mixed algorithm families are rejected for one decode call.
 - In 0.1.0, `verify_signature=False` was rejected in `decode` (0.2.0 allows an explicit unverified path).
 
-[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.4.0...v0.5.0

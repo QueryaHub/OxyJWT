@@ -95,6 +95,30 @@ fn py_to_json_depth(value: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
     ))
 }
 
+/// Standard JWT claim / header names, interned once per key rather than
+/// allocated fresh on every `set_item`. `pyo3::intern!` caches each key in a
+/// call-site-local static, both skipping the per-call `PyString` allocation
+/// and interning the string in CPython's own intern table, so a subsequent
+/// Python-side `dict.get("exp")` (a `str` literal, which CPython also
+/// interns) can hit the identity-comparison fast path during dict lookup
+/// instead of a full string comparison. Anything outside this list falls
+/// back to an ordinary, uninterned `PyString`.
+fn claim_key<'py>(py: Python<'py>, key: &str) -> Bound<'py, PyString> {
+    match key {
+        "exp" => pyo3::intern!(py, "exp").clone(),
+        "iat" => pyo3::intern!(py, "iat").clone(),
+        "nbf" => pyo3::intern!(py, "nbf").clone(),
+        "sub" => pyo3::intern!(py, "sub").clone(),
+        "aud" => pyo3::intern!(py, "aud").clone(),
+        "iss" => pyo3::intern!(py, "iss").clone(),
+        "jti" => pyo3::intern!(py, "jti").clone(),
+        "alg" => pyo3::intern!(py, "alg").clone(),
+        "typ" => pyo3::intern!(py, "typ").clone(),
+        "kid" => pyo3::intern!(py, "kid").clone(),
+        _ => PyString::new(py, key),
+    }
+}
+
 fn json_to_bound<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     match value {
         Value::Null => Ok(py.None().into_bound(py)),
@@ -122,7 +146,7 @@ fn json_to_bound<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyA
         Value::Object(values) => {
             let dict = PyDict::new(py);
             for (key, value) in values {
-                dict.set_item(key, json_to_bound(py, value)?)?;
+                dict.set_item(claim_key(py, key), json_to_bound(py, value)?)?;
             }
             Ok(dict.into_any())
         }

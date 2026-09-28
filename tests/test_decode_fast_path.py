@@ -146,6 +146,25 @@ def test_timedelta_leeway_still_honoured() -> None:
     )["sub"] == "u"
 
 
+def test_float_exp_boundary_still_checked_in_python() -> None:
+    """An integer `exp` skips the redundant Python recheck (Rust's own
+    boundary check is exact for it), but a `float` `exp` must not.
+
+    Pin `exp` to `K + 0.6` for the current whole second `K`: Rust rounds that
+    up to `K + 1` and, checked within the same second `K`, considers it not
+    yet expired. PyJWT (and the Python recheck below, for parity) truncates
+    it back down to `K`, which is already <= "now", so the token must still
+    be rejected. Adding a fraction to `time.time()` instead (`now + 0.6`)
+    would not reproduce this: it lands in the future either way and both
+    sides agree the token is valid.
+    """
+    current_second = int(time.time())
+    exp = current_second + 0.6
+    token = oxyjwt.encode({"sub": "u", "exp": exp}, SECRET, "HS256")
+    with pytest.raises(oxyjwt.ExpiredSignatureError):
+        oxyjwt.decode(token, SECRET, algorithms=["HS256"])
+
+
 class TestRequiredClaims:
     """`require` follows PyJWT: a JSON null counts as an absent claim."""
 
