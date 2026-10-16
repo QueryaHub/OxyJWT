@@ -66,6 +66,34 @@ pub struct Rfc7797Parts {
     pub header: Value,
 }
 
+/// Validate the `crit` header parameter according to RFC 7515 §4.1.11.
+///
+/// If `crit` is present in `header`, it must be a non-empty array of strings,
+/// and each named parameter must be present in `understood`. If any named parameter
+/// is unrecognized, an error is returned.
+pub fn validate_crit_header(header: &Value, understood: &[&str]) -> Result<(), String> {
+    let Some(crit_val) = header.get("crit") else {
+        return Ok(());
+    };
+    let Some(crit) = crit_val.as_array() else {
+        return Err("Items in 'crit' header must be strings".to_string());
+    };
+    if crit.is_empty() {
+        return Err("The 'crit' header parameter must not be empty".to_string());
+    }
+    for param in crit {
+        let Some(param_str) = param.as_str() else {
+            return Err("Items in 'crit' header must be strings".to_string());
+        };
+        if !understood.contains(&param_str) {
+            return Err(format!(
+                "Unsupported critical header parameter in 'crit': '{param_str}'"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_rfc7797_header(header: &Value) -> Result<(), String> {
     if header.get("b64").and_then(Value::as_bool) != Some(false) {
         return Err(
@@ -83,21 +111,8 @@ pub fn validate_rfc7797_header(header: &Value) -> Result<(), String> {
             "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string(),
         );
     }
-    let mut has_b64 = false;
-    for param in crit {
-        let Some(param_str) = param.as_str() else {
-            return Err("Items in 'crit' header must be strings".to_string());
-        };
-        match param_str {
-            "b64" => has_b64 = true,
-            other => {
-                return Err(format!(
-                    "Unsupported critical header parameter in 'crit': '{other}'"
-                ))
-            }
-        }
-    }
-    if !has_b64 {
+    validate_crit_header(header, &["b64"])?;
+    if !crit.iter().any(|param| param.as_str() == Some("b64")) {
         return Err(
             "The 'b64' header parameter requires 'b64' to be listed in 'crit'.".to_string(),
         );
@@ -237,5 +252,45 @@ mod tests {
             claims,
             parse_compact_claims_unverified(token).expect("claims")
         );
+    }
+
+    #[test]
+    fn validate_crit_header_accepts_no_crit() {
+        let header = serde_json::json!({"alg": "HS256"});
+        assert!(validate_crit_header(&header, &[]).is_ok());
+    }
+
+    #[test]
+    fn validate_crit_header_rejects_empty_crit() {
+        let header = serde_json::json!({"alg": "HS256", "crit": []});
+        let err = validate_crit_header(&header, &[]).unwrap_err();
+        assert!(err.contains("must not be empty"));
+    }
+
+    #[test]
+    fn validate_crit_header_rejects_non_array_crit() {
+        let header = serde_json::json!({"alg": "HS256", "crit": "b64"});
+        let err = validate_crit_header(&header, &[]).unwrap_err();
+        assert!(err.contains("must be strings"));
+    }
+
+    #[test]
+    fn validate_crit_header_rejects_non_string_items() {
+        let header = serde_json::json!({"alg": "HS256", "crit": [123]});
+        let err = validate_crit_header(&header, &[]).unwrap_err();
+        assert!(err.contains("must be strings"));
+    }
+
+    #[test]
+    fn validate_crit_header_rejects_unsupported_crit() {
+        let header = serde_json::json!({"alg": "HS256", "crit": ["exp-strict-mode"]});
+        let err = validate_crit_header(&header, &[]).unwrap_err();
+        assert!(err.contains("Unsupported critical header parameter in 'crit': 'exp-strict-mode'"));
+    }
+
+    #[test]
+    fn validate_crit_header_accepts_understood_crit() {
+        let header = serde_json::json!({"alg": "HS256", "crit": ["b64"]});
+        assert!(validate_crit_header(&header, &["b64"]).is_ok());
     }
 }

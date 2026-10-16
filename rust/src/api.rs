@@ -97,6 +97,8 @@ fn verify_and_parse_impl(
     // built from a JWK skip the equivalent check in `keys.rs`.
     ensure_single_family_for_decode(decode_validation.algorithms())?;
 
+    jws::validate_crit_header(&header, &[]).map_err(DecodeFail::Token)?;
+
     let signing_input = jws::signing_input_of(token, header_segment, payload_segment);
     if !jwt_crypto_verify(signature_segment, signing_input, decoding_key, algorithm)? {
         return Err(decode_fail(ErrorKind::InvalidSignature));
