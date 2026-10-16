@@ -202,15 +202,15 @@ class PyJWT:
             self._default_options
             and not kwargs
             and options is None
-            and audience is None
-            and issuer is None
-            and subject is None
             and typ is None
             and detached_payload is None
             and verify is None
             and leeway == 0
             and bool(algorithms)
             and isinstance(algorithms, (list, tuple))
+            and (audience is None or isinstance(audience, (str, list, tuple)))
+            and (issuer is None or isinstance(issuer, (str, list, tuple)))
+            and (subject is None or isinstance(subject, str))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
             # Inlined `_require_detached_payload_for_rfc7797` for the same
@@ -229,8 +229,19 @@ class PyJWT:
                             '"detached_payload" argument to decode a message '
                             "having the b64 header set to false."
                         )
-            payload = _oxyjwt.decode(token, key, algorithms)
-            self._validate_claims_default(payload)
+            payload = _oxyjwt.decode(
+                token,
+                key,
+                algorithms,
+                audience=audience,
+                issuer=issuer,
+                subject=subject,
+            )
+            self._validate_claims_default(
+                payload,
+                audience_checked=audience is not None,
+                subject_checked=subject is not None,
+            )
             return payload
         if kwargs:
             warnings.warn(
@@ -276,15 +287,15 @@ class PyJWT:
             self._default_options
             and not kwargs
             and options is None
-            and audience is None
-            and issuer is None
-            and subject is None
             and typ is None
             and detached_payload is None
             and verify is None
             and leeway == 0
             and bool(algorithms)
             and isinstance(algorithms, (list, tuple))
+            and (audience is None or isinstance(audience, (str, list, tuple)))
+            and (issuer is None or isinstance(issuer, (str, list, tuple)))
+            and (subject is None or isinstance(subject, str))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
             if ".." in token:
@@ -298,9 +309,18 @@ class PyJWT:
                             "having the b64 header set to false."
                         )
             payload, header, signature = _oxyjwt.decode_verified_complete(
-                token, key, algorithms
+                token,
+                key,
+                algorithms,
+                audience=audience,
+                issuer=issuer,
+                subject=subject,
             )
-            self._validate_claims_default(payload)
+            self._validate_claims_default(
+                payload,
+                audience_checked=audience is not None,
+                subject_checked=subject is not None,
+            )
             return {"payload": payload, "header": header, "signature": signature}
         if kwargs:
             first = next(iter(kwargs))
@@ -456,7 +476,13 @@ class PyJWT:
             "signature": _sig_as_bytes(sigb),
         }
 
-    def _validate_claims_default(self, payload: dict[str, Any]) -> None:
+    def _validate_claims_default(
+        self,
+        payload: dict[str, Any],
+        *,
+        audience_checked: bool = False,
+        subject_checked: bool = False,
+    ) -> None:
         """Claim checks left to Python after a plain verified decode.
 
         Equivalent to :meth:`_validate_claims` with default options, no
@@ -501,12 +527,13 @@ class PyJWT:
                 if exp_value <= now:
                     raise ExpiredSignatureError("Signature has expired")
 
-        if payload.get("aud"):
+        if not audience_checked and payload.get("aud"):
             raise InvalidAudienceError("Invalid audience")
 
-        sub = payload.get("sub", _MISSING)
-        if sub is not _MISSING and not isinstance(sub, str):
-            raise InvalidSubjectError("Subject must be a string")
+        if not subject_checked:
+            sub = payload.get("sub", _MISSING)
+            if sub is not _MISSING and not isinstance(sub, str):
+                raise InvalidSubjectError("Subject must be a string")
 
     def _validate_claims(
         self,
