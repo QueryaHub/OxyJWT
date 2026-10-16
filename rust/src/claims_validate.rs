@@ -44,10 +44,15 @@ fn parse_numeric_claim(value: Option<&Value>) -> NumericClaim {
 
 fn audience_matches(claim: &Value, expected: &HashSet<String>) -> bool {
     match claim {
-        Value::String(s) => expected.contains(s),
-        Value::Array(items) => items
-            .iter()
-            .any(|item| item.as_str().is_some_and(|aud| expected.contains(aud))),
+        Value::String(s) => !s.is_empty() && expected.contains(s),
+        Value::Array(items) => {
+            !items.is_empty()
+                && items.iter().all(|item| item.is_string())
+                && items.iter().any(|item| {
+                    item.as_str()
+                        .is_some_and(|aud| !aud.is_empty() && expected.contains(aud))
+                })
+        }
         _ => false,
     }
 }
@@ -124,31 +129,59 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
         }
     }
 
-    if let (Some(expected_sub), Some(Value::String(sub))) =
-        (options.sub.as_deref(), claims.get("sub"))
-    {
-        if sub != expected_sub {
-            return Err(new_error(ErrorKind::InvalidSubject));
+    if let Some(expected_sub) = options.sub.as_deref() {
+        match claims.get("sub") {
+            Some(Value::String(sub)) => {
+                if sub != expected_sub {
+                    return Err(new_error(ErrorKind::InvalidSubject));
+                }
+            }
+            Some(_) => {
+                return Err(new_error(ErrorKind::InvalidSubject));
+            }
+            None => (),
         }
     }
 
-    if let (Some(expected_iss), Some(iss_claim)) = (options.iss.as_ref(), claims.get("iss")) {
-        if !issuer_matches(iss_claim, expected_iss) {
-            return Err(new_error(ErrorKind::InvalidIssuer));
+    if let Some(expected_iss) = options.iss.as_ref() {
+        match claims.get("iss") {
+            None | Some(Value::Null) => {
+                return Err(new_error(ErrorKind::InvalidIssuer));
+            }
+            Some(iss_claim) => {
+                if !issuer_matches(iss_claim, expected_iss) {
+                    return Err(new_error(ErrorKind::InvalidIssuer));
+                }
+            }
         }
     }
 
-    if !options.validate_aud {
-        return Ok(());
+    if options.validate_aud {
+        match (claims.get("aud"), options.aud.as_ref()) {
+            (Some(_aud), None) => return Err(new_error(ErrorKind::InvalidAudience)),
+            (None | Some(Value::Null), Some(_)) => {
+                return Err(new_error(ErrorKind::MissingRequiredClaim(
+                    "aud".to_string(),
+                )));
+            }
+            (Some(Value::String(s)), Some(_)) if s.is_empty() => {
+                return Err(new_error(ErrorKind::MissingRequiredClaim(
+                    "aud".to_string(),
+                )));
+            }
+            (Some(Value::Array(items)), Some(_)) if items.is_empty() => {
+                return Err(new_error(ErrorKind::MissingRequiredClaim(
+                    "aud".to_string(),
+                )));
+            }
+            (Some(aud), Some(expected)) if !audience_matches(aud, expected) => {
+                return Err(new_error(ErrorKind::InvalidAudience));
+            }
+            _ => (),
+        }
     }
 
-    match (claims.get("aud"), options.aud.as_ref()) {
-        (Some(_aud), None) => Err(new_error(ErrorKind::InvalidAudience)),
-        (Some(aud), Some(expected)) if !audience_matches(aud, expected) => {
-            Err(new_error(ErrorKind::InvalidAudience))
-        }
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 #[cfg(test)]
