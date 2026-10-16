@@ -90,9 +90,9 @@ pub fn from_jwt_decode_error(err: Error) -> PyErr {
         ErrorKind::ExpiredSignature => ExpiredSignatureError::new_err(message),
         ErrorKind::ImmatureSignature => ImmatureSignatureError::new_err(message),
         ErrorKind::InvalidSignature => InvalidSignatureError::new_err(message),
-        ErrorKind::InvalidAudience => InvalidAudienceError::new_err(message),
-        ErrorKind::InvalidIssuer => InvalidIssuerError::new_err(message),
-        ErrorKind::InvalidSubject => InvalidSubjectError::new_err(message),
+        ErrorKind::InvalidAudience => InvalidAudienceError::new_err("Invalid audience"),
+        ErrorKind::InvalidIssuer => InvalidIssuerError::new_err("Invalid issuer"),
+        ErrorKind::InvalidSubject => InvalidSubjectError::new_err("Subject doesn't match"),
         ErrorKind::MissingRequiredClaim(_) => MissingRequiredClaimError::new_err(message),
         ErrorKind::InvalidAlgorithm
         | ErrorKind::InvalidAlgorithmName
