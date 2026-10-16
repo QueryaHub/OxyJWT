@@ -172,6 +172,7 @@ pub fn parse_compact_jws(token: &str) -> Result<CompactJwsParts, String> {
 /// size cap and strict three-segment check apply as everywhere else; the
 /// header is parsed as JSON only to reject a malformed one, matching
 /// `get_unverified_header`'s validation, then discarded.
+#[cfg(test)]
 pub fn parse_compact_claims_unverified(token: &str) -> Result<Value, String> {
     let (header_segment, payload_segment, _) = split_compact_segments(token)?;
     decode_header_json(header_segment)?;

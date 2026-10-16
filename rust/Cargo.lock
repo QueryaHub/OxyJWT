@@ -502,6 +502,7 @@ dependencies = [
  "base64",
  "jsonwebtoken",
  "pyo3",
+ "serde",
  "serde_json",
  "zeroize",
 ]
