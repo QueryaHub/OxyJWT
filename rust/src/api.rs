@@ -12,7 +12,7 @@ use crate::algorithms::{
     algorithm_family, algorithm_name, ensure_single_family, parse_algorithm, parse_algorithm_name,
     KeyFamily,
 };
-use crate::claims::{json_to_py, py_to_json_for_encode};
+use crate::claims::{deserialize_claims_dict, json_to_py, py_to_json_for_encode};
 use crate::claims_validate;
 use crate::errors;
 use crate::jws;
@@ -57,10 +57,10 @@ fn map_decode_fail(fail: DecodeFail) -> PyErr {
     }
 }
 
-/// Verified claims plus the protected header, both parsed exactly once.
-struct VerifiedToken {
+/// Verified payload bytes plus the protected header, both parsed/verified without intermediate claims DOM.
+struct VerifiedTokenRaw {
     header: Value,
-    claims: Value,
+    payload: Vec<u8>,
 }
 
 /// Verify a compact JWT and parse it in a single pass, optionally also
@@ -72,19 +72,12 @@ struct VerifiedToken {
 /// itself afterwards (as a separate `extract_signature_bytes` call used to).
 /// A second small, bounded decode of the signature segment alone is the
 /// trade-off for not re-scanning the (potentially much larger) full token.
-///
-/// `jsonwebtoken::decode` parses the header twice and the payload twice (once
-/// for the caller's type, once for its internal validation struct) and returns
-/// a `Header` struct that we would have to re-serialize to hand back to Python.
-/// Doing the steps here keeps it to one header parse, one payload parse and one
-/// signature check, and lets us reuse the already-parsed header as the Python
-/// header dict.
 fn verify_and_parse_impl(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
     with_signature: bool,
-) -> Result<(VerifiedToken, Option<Vec<u8>>), DecodeFail> {
+) -> Result<(VerifiedTokenRaw, Option<Vec<u8>>), DecodeFail> {
     let (header_segment, payload_segment, signature_segment) =
         jws::split_compact_segments(token).map_err(DecodeFail::Decode)?;
 
@@ -112,24 +105,15 @@ fn verify_and_parse_impl(
     let payload = URL_SAFE_NO_PAD
         .decode(payload_segment)
         .map_err(|err| DecodeFail::Decode(err.to_string()))?;
-    let claims: Value =
-        serde_json::from_slice(&payload).map_err(|err| DecodeFail::Decode(err.to_string()))?;
-    if !claims.is_object() {
-        return Err(DecodeFail::Decode(
-            "Invalid payload string: must be a json object".to_owned(),
-        ));
-    }
 
-    claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
-
-    Ok((VerifiedToken { header, claims }, signature))
+    Ok((VerifiedTokenRaw { header, payload }, signature))
 }
 
 fn verify_and_parse(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<VerifiedToken, DecodeFail> {
+) -> Result<VerifiedTokenRaw, DecodeFail> {
     verify_and_parse_impl(token, decoding_key, decode_validation, false)
         .map(|(verified, _)| verified)
 }
@@ -138,7 +122,7 @@ fn verify_and_parse_with_signature(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
+) -> Result<(VerifiedTokenRaw, Vec<u8>), DecodeFail> {
     let (verified, signature) =
         verify_and_parse_impl(token, decoding_key, decode_validation, true)?;
     Ok((
@@ -346,7 +330,14 @@ pub fn decode(
     })
     .map_err(map_decode_fail)?;
 
-    json_to_py(py, &verified.claims)
+    let claims = deserialize_claims_dict(py, &verified.payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
+        .map_err(errors::from_jwt_decode_error)?;
+
+    Ok(claims.into_any().unbind())
 }
 
 type DecodeVerifiedCompleteOutput = (Py<PyAny>, Py<PyAny>, Py<PyBytes>);
@@ -402,10 +393,16 @@ pub fn decode_verified_complete(
     })
     .map_err(map_decode_fail)?;
 
-    let claims_py = json_to_py(py, &verified.claims)?;
+    let claims = deserialize_claims_dict(py, &verified.payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
+        .map_err(errors::from_jwt_decode_error)?;
+
     let header_py = json_to_py(py, &verified.header)?;
     let sig_py = PyBytes::new(py, &signature);
-    Ok((claims_py, header_py, sig_py.into()))
+    Ok((claims.into_any().unbind(), header_py, sig_py.into()))
 }
 
 fn decode_rfc7797_verified_complete(
@@ -423,15 +420,8 @@ fn decode_rfc7797_verified_complete(
     }
 
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
-    let (parts, claims, signature) = maybe_detach(py, skip_detach, || -> Result<_, DecodeFail> {
+    let (parts, signature) = maybe_detach(py, skip_detach, || -> Result<_, DecodeFail> {
         let parts = jws::parse_rfc7797_compact(token).map_err(DecodeFail::Token)?;
-        let claims: Value = serde_json::from_slice(detached_payload)
-            .map_err(|err| DecodeFail::Decode(format!("Invalid payload string: {err}")))?;
-        if !claims.is_object() {
-            return Err(DecodeFail::Decode(
-                "Invalid payload string: must be a json object".to_owned(),
-            ));
-        }
 
         let algorithm = header_algorithm(&parts.header)?;
         if !decode_validation.algorithms().contains(&algorithm) {
@@ -449,19 +439,23 @@ fn decode_rfc7797_verified_complete(
             return Err(decode_fail(ErrorKind::InvalidSignature));
         }
 
-        claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
-
         let signature = URL_SAFE_NO_PAD
             .decode(&parts.signature_segment)
             .map_err(|err| DecodeFail::Decode(err.to_string()))?;
-        Ok((parts, claims, signature))
+        Ok((parts, signature))
     })
     .map_err(map_decode_fail)?;
 
+    let claims = deserialize_claims_dict(py, detached_payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
+        .map_err(errors::from_jwt_decode_error)?;
+
     let header_py = json_to_py(py, &parts.header)?;
-    let claims_py = json_to_py(py, &claims)?;
     let sig_py = PyBytes::new(py, &signature);
-    Ok((claims_py, header_py, sig_py.into()))
+    Ok((claims.into_any().unbind(), header_py, sig_py.into()))
 }
 
 #[pyfunction]
@@ -480,20 +474,18 @@ pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>>
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    // `jsonwebtoken::dangerous::insecure_decode` re-implements its own
-    // lenient segment split (silently misparsing a token with extra `.`s
-    // rather than rejecting it) and, being generic over the return type,
-    // fully deserializes the header into `jsonwebtoken`'s own `Header`
-    // struct even though only `.claims` is ever read here. Reusing our own
-    // strict, single-pass `jws` helpers instead means one split (with our
-    // size cap and segment-count check), a JSON-object check on the header
-    // to reject a malformed one, and a payload parse -- with the header
-    // value itself never even converted to a Python object.
-    let claims = py
-        .detach(move || jws::parse_compact_claims_unverified(token))
+    let payload = py
+        .detach(move || -> Result<Vec<u8>, String> {
+            let (header_segment, payload_segment, _) = jws::split_compact_segments(token)?;
+            jws::decode_header_json(header_segment)?;
+            URL_SAFE_NO_PAD
+                .decode(payload_segment)
+                .map_err(|e| e.to_string())
+        })
         .map_err(errors::decode_error)?;
 
-    json_to_py(py, &claims)
+    let claims = deserialize_claims_dict(py, &payload).map_err(errors::decode_error)?;
+    Ok(claims.into_any().unbind())
 }
 
 fn apply_headers(

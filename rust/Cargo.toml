@@ -19,6 +19,7 @@ aws_lc_rs = ["jsonwebtoken/aws_lc_rs", "dep:aws-lc-rs"]
 base64 = "0.22"
 jsonwebtoken = { version = "10", default-features = false, features = ["use_pem"] }
 pyo3 = { version = "0.28", features = ["abi3-py310"] }
+serde = "1"
 serde_json = "1"
 zeroize = "1"
 

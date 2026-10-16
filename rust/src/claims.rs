@@ -1,7 +1,9 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple};
+use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use serde_json::{Map, Number};
+use std::borrow::Cow;
 
 use crate::errors;
 
@@ -115,6 +117,20 @@ fn claim_key<'py>(py: Python<'py>, key: &str) -> Bound<'py, PyString> {
         "alg" => pyo3::intern!(py, "alg").clone(),
         "typ" => pyo3::intern!(py, "typ").clone(),
         "kid" => pyo3::intern!(py, "kid").clone(),
+        "name" => pyo3::intern!(py, "name").clone(),
+        "email" => pyo3::intern!(py, "email").clone(),
+        "scope" => pyo3::intern!(py, "scope").clone(),
+        "scopes" => pyo3::intern!(py, "scopes").clone(),
+        "roles" => pyo3::intern!(py, "roles").clone(),
+        "permissions" => pyo3::intern!(py, "permissions").clone(),
+        "client_id" => pyo3::intern!(py, "client_id").clone(),
+        "azp" => pyo3::intern!(py, "azp").clone(),
+        "nonce" => pyo3::intern!(py, "nonce").clone(),
+        "auth_time" => pyo3::intern!(py, "auth_time").clone(),
+        "user_id" => pyo3::intern!(py, "user_id").clone(),
+        "metadata" => pyo3::intern!(py, "metadata").clone(),
+        "data" => pyo3::intern!(py, "data").clone(),
+        "id" => pyo3::intern!(py, "id").clone(),
         _ => PyString::new(py, key),
     }
 }
@@ -151,4 +167,151 @@ fn json_to_bound<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyA
             Ok(dict.into_any())
         }
     }
+}
+
+struct PyAnySeed<'py> {
+    py: Python<'py>,
+}
+
+impl<'de, 'py> DeserializeSeed<'de> for PyAnySeed<'py> {
+    type Value = Bound<'py, PyAny>;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(PyAnyVisitor { py: self.py })
+    }
+}
+
+struct PyAnyVisitor<'py> {
+    py: Python<'py>,
+}
+
+impl<'de, 'py> Visitor<'de> for PyAnyVisitor<'py> {
+    type Value = Bound<'py, PyAny>;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        formatter.write_str("any valid JSON value")
+    }
+
+    #[inline]
+    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
+        Ok(PyBool::new(self.py, v).to_owned().into_any())
+    }
+
+    #[inline]
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        v.into_pyobject(self.py)
+            .map(|obj| obj.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        v.into_pyobject(self.py)
+            .map(|obj| obj.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_i128<E>(self, v: i128) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        v.into_pyobject(self.py)
+            .map(|obj| obj.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_u128<E>(self, v: u128) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        v.into_pyobject(self.py)
+            .map(|obj| obj.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        PyFloat::new(self.py, v)
+            .into_pyobject(self.py)
+            .map(|obj| obj.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+        Ok(PyString::new(self.py, v).into_any())
+    }
+
+    #[inline]
+    fn visit_borrowed_str<E>(self, v: &'de str) -> Result<Self::Value, E> {
+        Ok(PyString::new(self.py, v).into_any())
+    }
+
+    #[inline]
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(self.py.None().into_bound(self.py))
+    }
+
+    #[inline]
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(self.py.None().into_bound(self.py))
+    }
+
+    #[inline]
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut elements = match seq.size_hint() {
+            Some(len) => Vec::with_capacity(len),
+            None => Vec::new(),
+        };
+        while let Some(elem) = seq.next_element_seed(PyAnySeed { py: self.py })? {
+            elements.push(elem);
+        }
+        PyList::new(self.py, elements)
+            .map(|list| list.into_any())
+            .map_err(de::Error::custom)
+    }
+
+    #[inline]
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let dict = PyDict::new(self.py);
+        while let Some(key) = map.next_key::<Cow<'_, str>>()? {
+            let py_key = claim_key(self.py, &key);
+            let val = map.next_value_seed(PyAnySeed { py: self.py })?;
+            dict.set_item(py_key, val).map_err(de::Error::custom)?;
+        }
+        Ok(dict.into_any())
+    }
+}
+
+pub fn deserialize_claims_dict<'py>(
+    py: Python<'py>,
+    bytes: &[u8],
+) -> Result<Bound<'py, PyDict>, String> {
+    let mut de = serde_json::Deserializer::from_slice(bytes);
+    let obj = de
+        .deserialize_any(PyAnyVisitor { py })
+        .map_err(|e| e.to_string())?;
+    de.end().map_err(|e| e.to_string())?;
+    obj.cast_into::<PyDict>()
+        .map_err(|_| "Invalid payload string: must be a json object".to_string())
 }

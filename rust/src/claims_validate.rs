@@ -1,10 +1,9 @@
-//! Claim validation for parsed JWT payloads (e.g. RFC 7797 detached), mirroring jsonwebtoken.
-
 use std::collections::HashSet;
 
 use jsonwebtoken::errors::{new_error, Error, ErrorKind};
 use jsonwebtoken::{get_current_timestamp, Validation};
-use serde_json::Value;
+use pyo3::prelude::*;
+use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
 /// Spec claims that `required_spec_claims` can hold, in a fixed order.
 ///
@@ -20,69 +19,94 @@ enum NumericClaim {
     Value(u64),
 }
 
-fn parse_numeric_claim(value: Option<&Value>) -> NumericClaim {
+fn parse_numeric_claim_py(value: Option<Bound<'_, PyAny>>) -> NumericClaim {
     let Some(value) = value else {
         return NumericClaim::Missing;
     };
-    match value {
-        Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
-                NumericClaim::Value(u)
-            } else if let Some(f) = n.as_f64() {
-                if f.is_finite() && f >= 0.0 && f < u64::MAX as f64 {
-                    NumericClaim::Value(f.round() as u64)
+    if value.is_none() {
+        return NumericClaim::Invalid;
+    }
+    if value.is_instance_of::<PyBool>() {
+        return NumericClaim::Invalid;
+    }
+    if let Ok(u) = value.extract::<u64>() {
+        NumericClaim::Value(u)
+    } else if let Ok(i) = value.extract::<i64>() {
+        if i >= 0 {
+            NumericClaim::Value(i as u64)
+        } else {
+            NumericClaim::Invalid
+        }
+    } else if let Ok(f) = value.extract::<f64>() {
+        if f.is_finite() && f >= 0.0 && f < u64::MAX as f64 {
+            NumericClaim::Value(f.round() as u64)
+        } else {
+            NumericClaim::Invalid
+        }
+    } else {
+        NumericClaim::Invalid
+    }
+}
+
+fn audience_matches_py(claim: &Bound<'_, PyAny>, expected: &HashSet<String>) -> bool {
+    if claim.is_instance_of::<PyString>() {
+        if let Ok(s) = claim.extract::<&str>() {
+            return !s.is_empty() && expected.contains(s);
+        }
+    } else if let Ok(items) = claim.cast::<PyList>() {
+        if items.is_empty() {
+            return false;
+        }
+        let mut any_match = false;
+        for item in items.iter() {
+            if item.is_instance_of::<PyString>() {
+                if let Ok(s) = item.extract::<&str>() {
+                    if !s.is_empty() && expected.contains(s) {
+                        any_match = true;
+                    }
                 } else {
-                    NumericClaim::Invalid
+                    return false;
                 }
             } else {
-                NumericClaim::Invalid
+                return false;
             }
         }
-        _ => NumericClaim::Invalid,
+        return any_match;
     }
+    false
 }
 
-fn audience_matches(claim: &Value, expected: &HashSet<String>) -> bool {
-    match claim {
-        Value::String(s) => !s.is_empty() && expected.contains(s),
-        Value::Array(items) => {
-            !items.is_empty()
-                && items.iter().all(|item| item.is_string())
-                && items.iter().any(|item| {
-                    item.as_str()
-                        .is_some_and(|aud| !aud.is_empty() && expected.contains(aud))
-                })
+fn issuer_matches_py(claim: &Bound<'_, PyAny>, expected: &HashSet<String>) -> bool {
+    if claim.is_instance_of::<PyString>() {
+        if let Ok(s) = claim.extract::<&str>() {
+            return expected.contains(s);
         }
-        _ => false,
+    } else if let Ok(items) = claim.cast::<PyList>() {
+        for item in items.iter() {
+            if item.is_instance_of::<PyString>() {
+                if let Ok(s) = item.extract::<&str>() {
+                    if expected.contains(s) {
+                        return true;
+                    }
+                }
+            }
+        }
     }
+    false
 }
 
-fn issuer_matches(claim: &Value, expected: &HashSet<String>) -> bool {
-    match claim {
-        Value::String(s) => expected.contains(s),
-        Value::Array(items) => items
-            .iter()
-            .any(|item| item.as_str().is_some_and(|iss| expected.contains(iss))),
-        _ => false,
-    }
-}
-
-/// Validate standard claims on an already-parsed JSON object (post signature verify).
-pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(), Error> {
-    if !claims.is_object() {
-        return Err(new_error(ErrorKind::InvalidToken));
-    }
-
+/// Validate standard claims directly on a PyDict claims object.
+pub fn validate_claims_dict(claims: &Bound<'_, PyDict>, options: &Validation) -> Result<(), Error> {
     if !options.required_spec_claims.is_empty() {
         for required in REQUIRABLE_SPEC_CLAIMS {
             if !options.required_spec_claims.contains(required) {
                 continue;
             }
-            // A JSON null counts as absent, matching `_validate_required` on the
-            // Python side and PyJWT's `payload.get(claim) is None` rule. A
-            // present but malformed value is reported by the format checks
-            // below instead.
-            if !matches!(claims.get(required), Some(value) if !value.is_null()) {
+            let is_present = match claims.get_item(required) {
+                Ok(Some(value)) => !value.is_none(),
+                _ => false,
+            };
+            if !is_present {
                 return Err(new_error(ErrorKind::MissingRequiredClaim(
                     required.to_owned(),
                 )));
@@ -93,24 +117,17 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
     let now = get_current_timestamp();
 
     if options.validate_exp || options.validate_nbf {
-        if options.validate_exp
-            && matches!(
-                parse_numeric_claim(claims.get("exp")),
-                NumericClaim::Invalid
-            )
-        {
+        let exp_claim = parse_numeric_claim_py(claims.get_item("exp").ok().flatten());
+        let nbf_claim = parse_numeric_claim_py(claims.get_item("nbf").ok().flatten());
+
+        if options.validate_exp && matches!(exp_claim, NumericClaim::Invalid) {
             return Err(new_error(ErrorKind::InvalidClaimFormat("exp".to_string())));
         }
-        if options.validate_nbf
-            && matches!(
-                parse_numeric_claim(claims.get("nbf")),
-                NumericClaim::Invalid
-            )
-        {
+        if options.validate_nbf && matches!(nbf_claim, NumericClaim::Invalid) {
             return Err(new_error(ErrorKind::InvalidClaimFormat("nbf".to_string())));
         }
 
-        if let NumericClaim::Value(exp) = parse_numeric_claim(claims.get("exp")) {
+        if let NumericClaim::Value(exp) = exp_claim {
             if exp < options.reject_tokens_expiring_in_less_than {
                 return Err(new_error(ErrorKind::InvalidToken));
             }
@@ -122,7 +139,7 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
             }
         }
 
-        if let NumericClaim::Value(nbf) = parse_numeric_claim(claims.get("nbf")) {
+        if let NumericClaim::Value(nbf) = nbf_claim {
             if options.validate_nbf && nbf > now.saturating_add(options.leeway) {
                 return Err(new_error(ErrorKind::ImmatureSignature));
             }
@@ -130,72 +147,75 @@ pub fn validate_claims_value(claims: &Value, options: &Validation) -> Result<(),
     }
 
     if let Some(expected_sub) = options.sub.as_deref() {
-        match claims.get("sub") {
-            Some(Value::String(sub)) => {
-                if sub != expected_sub {
+        match claims.get_item("sub") {
+            Ok(Some(val)) => {
+                if val.is_instance_of::<PyString>() {
+                    let sub = val
+                        .extract::<&str>()
+                        .map_err(|_| new_error(ErrorKind::InvalidSubject))?;
+                    if sub != expected_sub {
+                        return Err(new_error(ErrorKind::InvalidSubject));
+                    }
+                } else {
                     return Err(new_error(ErrorKind::InvalidSubject));
                 }
             }
-            Some(_) => {
-                return Err(new_error(ErrorKind::InvalidSubject));
-            }
-            None => (),
+            Ok(None) => (),
+            Err(_) => return Err(new_error(ErrorKind::InvalidSubject)),
         }
     }
 
     if let Some(expected_iss) = options.iss.as_ref() {
-        match claims.get("iss") {
-            None | Some(Value::Null) => {
-                return Err(new_error(ErrorKind::InvalidIssuer));
-            }
-            Some(iss_claim) => {
-                if !issuer_matches(iss_claim, expected_iss) {
+        match claims.get_item("iss") {
+            Ok(None) => return Err(new_error(ErrorKind::InvalidIssuer)),
+            Ok(Some(val)) if val.is_none() => return Err(new_error(ErrorKind::InvalidIssuer)),
+            Ok(Some(val)) => {
+                if !issuer_matches_py(&val, expected_iss) {
                     return Err(new_error(ErrorKind::InvalidIssuer));
                 }
             }
+            Err(_) => return Err(new_error(ErrorKind::InvalidIssuer)),
         }
     }
 
     if options.validate_aud {
-        match (claims.get("aud"), options.aud.as_ref()) {
-            (Some(_aud), None) => return Err(new_error(ErrorKind::InvalidAudience)),
-            (None | Some(Value::Null), Some(_)) => {
+        let aud_claim = claims.get_item("aud").ok().flatten();
+        match (aud_claim, options.aud.as_ref()) {
+            (Some(_), None) => return Err(new_error(ErrorKind::InvalidAudience)),
+            (None, Some(_)) => {
                 return Err(new_error(ErrorKind::MissingRequiredClaim(
                     "aud".to_string(),
                 )));
             }
-            (Some(Value::String(s)), Some(_)) if s.is_empty() => {
+            (Some(val), Some(_)) if val.is_none() => {
                 return Err(new_error(ErrorKind::MissingRequiredClaim(
                     "aud".to_string(),
                 )));
             }
-            (Some(Value::Array(items)), Some(_)) if items.is_empty() => {
+            (Some(val), Some(_))
+                if val.is_instance_of::<PyString>()
+                    && val.extract::<&str>().is_ok_and(|s| s.is_empty()) =>
+            {
                 return Err(new_error(ErrorKind::MissingRequiredClaim(
                     "aud".to_string(),
                 )));
             }
-            (Some(aud), Some(expected)) if !audience_matches(aud, expected) => {
-                return Err(new_error(ErrorKind::InvalidAudience));
+            (Some(val), Some(_))
+                if val.is_instance_of::<PyList>()
+                    && val.cast::<PyList>().is_ok_and(|l| l.is_empty()) =>
+            {
+                return Err(new_error(ErrorKind::MissingRequiredClaim(
+                    "aud".to_string(),
+                )));
             }
-            _ => (),
+            (Some(val), Some(expected)) => {
+                if !audience_matches_py(&val, expected) {
+                    return Err(new_error(ErrorKind::InvalidAudience));
+                }
+            }
+            (None, None) => (),
         }
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use jsonwebtoken::Algorithm;
-    use serde_json::json;
-
-    #[test]
-    fn rejects_expired_detached_style_claims() {
-        let mut validation = Validation::new(Algorithm::HS256);
-        validation.validate_exp = true;
-        let claims = json!({"sub": "u", "exp": 1});
-        let err = validate_claims_value(&claims, &validation).unwrap_err();
-        assert!(matches!(err.kind(), ErrorKind::ExpiredSignature));
-    }
 }
