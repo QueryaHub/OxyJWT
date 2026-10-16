@@ -1,6 +1,6 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use jsonwebtoken::errors::{new_error, ErrorKind};
+use jsonwebtoken::errors::ErrorKind;
 use jsonwebtoken::{
     crypto::verify as jwt_crypto_verify, encode as jwt_encode, DecodingKey, Header,
 };
@@ -14,7 +14,7 @@ use crate::algorithms::{
 };
 use crate::claims::{deserialize_claims_dict, json_to_py, py_to_json_for_encode};
 use crate::claims_validate;
-use crate::errors;
+use crate::errors::{self, decode_fail, map_decode_fail, DecodeFail};
 use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation::{self, DecodeValidation};
@@ -29,38 +29,10 @@ use aws_lc_rs::signature::{
     RSA_PSS_SHA384, RSA_PSS_SHA512,
 };
 
-/// Failure from a decode step that runs with the GIL released.
-///
-/// Keeping the variants typed (instead of matching on message text) means the
-/// Python exception class is chosen from the failure itself.
-enum DecodeFail {
-    Jwt(jsonwebtoken::errors::Error),
-    Decode(String),
-    Token(String),
-}
-
-impl From<jsonwebtoken::errors::Error> for DecodeFail {
-    fn from(err: jsonwebtoken::errors::Error) -> Self {
-        DecodeFail::Jwt(err)
-    }
-}
-
-fn decode_fail(kind: ErrorKind) -> DecodeFail {
-    DecodeFail::Jwt(new_error(kind))
-}
-
-fn map_decode_fail(fail: DecodeFail) -> PyErr {
-    match fail {
-        DecodeFail::Jwt(err) => errors::from_jwt_decode_error(err),
-        DecodeFail::Decode(message) => errors::decode_error(message),
-        DecodeFail::Token(message) => errors::invalid_token(message),
-    }
-}
-
-/// Verified payload bytes plus the protected header, both parsed/verified without intermediate claims DOM.
-struct VerifiedTokenRaw {
-    header: Value,
+struct VerifiedTokenParts {
+    header: Option<Value>,
     payload: Vec<u8>,
+    signature: Option<Vec<u8>>,
 }
 
 /// Verify a compact JWT and parse it in a single pass, optionally also
@@ -76,21 +48,32 @@ fn verify_and_parse_impl(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
+    with_header: bool,
     with_signature: bool,
-) -> Result<(VerifiedTokenRaw, Option<Vec<u8>>), DecodeFail> {
+) -> Result<VerifiedTokenParts, DecodeFail> {
     let (header_segment, payload_segment, signature_segment) =
         jws::split_compact_segments(token).map_err(DecodeFail::Decode)?;
 
-    let header = jws::decode_header_json(header_segment).map_err(DecodeFail::Decode)?;
-    let algorithm = header_algorithm(&header)?;
-    if !decode_validation.algorithms().contains(&algorithm) {
-        return Err(decode_fail(ErrorKind::InvalidAlgorithm));
-    }
-    // jsonwebtoken rejects an allow-list spanning several key families; keys
-    // built from a JWK skip the equivalent check in `keys.rs`.
-    ensure_single_family_for_decode(decode_validation.algorithms())?;
-
-    jws::validate_crit_header(&header, &[]).map_err(DecodeFail::Token)?;
+    let (header, algorithm) = if with_header {
+        let header = jws::decode_header_json(header_segment).map_err(DecodeFail::Decode)?;
+        let algorithm = header_algorithm(&header)?;
+        if !decode_validation.algorithms().contains(&algorithm) {
+            return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+        }
+        ensure_single_family_for_decode(decode_validation.algorithms())?;
+        jws::validate_crit_header(&header, &[]).map_err(DecodeFail::Token)?;
+        (Some(header), algorithm)
+    } else {
+        let summary = jws::resolve_header_alg_and_crit(header_segment)?;
+        if !decode_validation.algorithms().contains(&summary.algorithm) {
+            return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+        }
+        ensure_single_family_for_decode(decode_validation.algorithms())?;
+        if let Some(crit_val) = summary.crit {
+            jws::validate_crit_value(&crit_val, &[]).map_err(DecodeFail::Token)?;
+        }
+        (None, summary.algorithm)
+    };
 
     let signing_input = jws::signing_input_of(token, header_segment, payload_segment);
     if !jwt_crypto_verify(signature_segment, signing_input, decoding_key, algorithm)? {
@@ -106,28 +89,34 @@ fn verify_and_parse_impl(
         .decode(payload_segment)
         .map_err(|err| DecodeFail::Decode(err.to_string()))?;
 
-    Ok((VerifiedTokenRaw { header, payload }, signature))
+    Ok(VerifiedTokenParts {
+        header,
+        payload,
+        signature,
+    })
 }
 
 fn verify_and_parse(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<VerifiedTokenRaw, DecodeFail> {
-    verify_and_parse_impl(token, decoding_key, decode_validation, false)
-        .map(|(verified, _)| verified)
+) -> Result<Vec<u8>, DecodeFail> {
+    let parts = verify_and_parse_impl(token, decoding_key, decode_validation, false, false)?;
+    Ok(parts.payload)
 }
 
 fn verify_and_parse_with_signature(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<(VerifiedTokenRaw, Vec<u8>), DecodeFail> {
-    let (verified, signature) =
-        verify_and_parse_impl(token, decoding_key, decode_validation, true)?;
+) -> Result<(Value, Vec<u8>, Vec<u8>), DecodeFail> {
+    let parts = verify_and_parse_impl(token, decoding_key, decode_validation, true, true)?;
     Ok((
-        verified,
-        signature.expect("with_signature=true always returns Some"),
+        parts.header.expect("with_header=true always returns Some"),
+        parts.payload,
+        parts
+            .signature
+            .expect("with_signature=true always returns Some"),
     ))
 }
 
@@ -325,12 +314,12 @@ pub fn decode(
     let decoding_key = decoding_key_from_py(key, decode_validation.algorithms())?;
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
 
-    let verified = maybe_detach(py, skip_detach, || {
+    let payload = maybe_detach(py, skip_detach, || {
         verify_and_parse(token, &decoding_key, &decode_validation)
     })
     .map_err(map_decode_fail)?;
 
-    let claims = deserialize_claims_dict(py, &verified.payload)
+    let claims = deserialize_claims_dict(py, &payload)
         .map_err(DecodeFail::Decode)
         .map_err(map_decode_fail)?;
 
@@ -388,19 +377,19 @@ pub fn decode_verified_complete(
     }
 
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
-    let (verified, signature) = maybe_detach(py, skip_detach, || {
+    let (header, payload, signature) = maybe_detach(py, skip_detach, || {
         verify_and_parse_with_signature(token, &decoding_key, &decode_validation)
     })
     .map_err(map_decode_fail)?;
 
-    let claims = deserialize_claims_dict(py, &verified.payload)
+    let claims = deserialize_claims_dict(py, &payload)
         .map_err(DecodeFail::Decode)
         .map_err(map_decode_fail)?;
 
     claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
         .map_err(errors::from_jwt_decode_error)?;
 
-    let header_py = json_to_py(py, &verified.header)?;
+    let header_py = json_to_py(py, &header)?;
     let sig_py = PyBytes::new(py, &signature);
     Ok((claims.into_any().unbind(), header_py, sig_py.into()))
 }
