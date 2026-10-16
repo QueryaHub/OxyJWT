@@ -664,6 +664,20 @@ class PyJWT:
     def _validate_headers(
         header: dict[str, Any], options: dict[str, Any]
     ) -> None:
+        if "crit" in header:
+            crit = header["crit"]
+            if not isinstance(crit, list) or len(crit) == 0:
+                raise InvalidTokenError(
+                    "The 'crit' header parameter must be an array of strings"
+                )
+            for param in crit:
+                if not isinstance(param, str):
+                    raise InvalidTokenError("Items in 'crit' header must be strings")
+                if param == "b64" and header.get("b64") is False:
+                    continue
+                raise InvalidTokenError(
+                    f"Unsupported critical header parameter in 'crit': '{param}'"
+                )
         if options.get("verify_typ", False) or "typ" in options:
             expected_typ = options.get("typ")
             actual_typ = header.get("typ")
