@@ -1,7 +1,36 @@
-use jsonwebtoken::errors::Error;
+use jsonwebtoken::errors::{new_error, Error, ErrorKind};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
+
+/// Failure from a decode step that runs with the GIL released.
+///
+/// Keeping the variants typed (instead of matching on message text) means the
+/// Python exception class is chosen from the failure itself.
+#[derive(Debug)]
+pub enum DecodeFail {
+    Jwt(Error),
+    Decode(String),
+    Token(String),
+}
+
+impl From<Error> for DecodeFail {
+    fn from(err: Error) -> Self {
+        DecodeFail::Jwt(err)
+    }
+}
+
+pub fn decode_fail(kind: ErrorKind) -> DecodeFail {
+    DecodeFail::Jwt(new_error(kind))
+}
+
+pub fn map_decode_fail(fail: DecodeFail) -> PyErr {
+    match fail {
+        DecodeFail::Jwt(err) => from_jwt_decode_error(err),
+        DecodeFail::Decode(message) => decode_error(message),
+        DecodeFail::Token(message) => invalid_token(message),
+    }
+}
 
 // Mirrors PyJWT: InvalidTokenError -> DecodeError -> InvalidSignatureError
 create_exception!(_oxyjwt, OxyJWTError, PyException);
