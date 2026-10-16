@@ -59,3 +59,54 @@ def test_exception_hierarchy_pyjwt_shape() -> None:
     assert issubclass(oxyjwt.InvalidSignatureError, oxyjwt.DecodeError)
     assert issubclass(oxyjwt.ExpiredSignatureError, oxyjwt.InvalidTokenError)
     assert oxyjwt.PyJWTError is oxyjwt.OxyJWTError
+
+
+def test_decode_rejects_missing_or_non_string_alg_in_header() -> None:
+    # {"typ": "JWT"}
+    t1 = "eyJ0eXAiOiJKV1QifQ.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError, match="missing field `alg` in JWT header"):
+        oxyjwt.decode(t1, "secret", algorithms=["HS256"])
+
+    # {"alg": 123}
+    t2 = "eyJhbGciOjEyM30.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError, match="missing field `alg` in JWT header"):
+        oxyjwt.decode(t2, "secret", algorithms=["HS256"])
+
+    # {"alg": null}
+    t3 = "eyJhbGciOm51bGx9.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError, match="missing field `alg` in JWT header"):
+        oxyjwt.decode(t3, "secret", algorithms=["HS256"])
+
+
+def test_decode_rejects_non_object_header() -> None:
+    # [1, 2]
+    t1 = "WzEsMl0.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError, match="Invalid header string: must be a json object"):
+        oxyjwt.decode(t1, "secret", algorithms=["HS256"])
+
+    # "string"
+    t2 = "InN0cmluZyI.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError, match="Invalid header string: must be a json object"):
+        oxyjwt.decode(t2, "secret", algorithms=["HS256"])
+
+
+def test_decode_rejects_malformed_header_json() -> None:
+    # {"alg":
+    t = "eyJhbGciOi.e30.sig"
+    with pytest.raises(oxyjwt.DecodeError):
+        oxyjwt.decode(t, "secret", algorithms=["HS256"])
+
+
+def test_decode_with_custom_header_fields() -> None:
+    token = oxyjwt.encode(
+        {"sub": "user42"},
+        "a-very-long-secret-key-that-is-secure-32b",
+        algorithm="HS256",
+        headers={"kid": "my-key-1", "custom": "some-value"},
+    )
+    claims = oxyjwt.decode(
+        token,
+        "a-very-long-secret-key-that-is-secure-32b",
+        algorithms=["HS256"],
+    )
+    assert claims == {"sub": "user42"}
