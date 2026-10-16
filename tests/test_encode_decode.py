@@ -270,3 +270,38 @@ def test_hmac_encode_decode_are_thread_safe_without_gil_release() -> None:
     assert all(results)
 
 
+def test_decode_complex_claims_streaming_deserialization() -> None:
+    payload = {
+        "sub": "user-456",
+        "aud": "https://api.example.com",
+        "iss": "https://auth.example.com",
+        "exp": int(time.time()) + 3600,
+        "bool_true": True,
+        "bool_false": False,
+        "null_val": None,
+        "int_val": 42,
+        "float_val": 3.14159,
+        "nested_list": [1, "two", 3.0, [True, False, None]],
+        "nested_dict": {
+            "level1": {
+                "level2": {
+                    "tag": "deep",
+                    "values": ["a", "b", "c"],
+                }
+            }
+        },
+        "unicode": "Привет, мир! 🚀 123",
+    }
+    secret = "test-secret-with-plenty-of-bytes-for-hs256-security"
+    token = oxyjwt.encode(payload, secret, "HS256")
+    decoded = oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="https://api.example.com",
+        issuer="https://auth.example.com",
+    )
+    assert decoded == payload
+
+
+
