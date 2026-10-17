@@ -374,5 +374,44 @@ def test_encode_json_algorithm_override_rejected() -> None:
         oxyjwt.encode_json('{"sub": "u"}', "secret", algorithm="HS256", headers={"alg": "RS256"})
 
 
+def test_encode_static_header_equivalence() -> None:
+    payload = {"sub": "user-42", "scope": "read"}
+    secret = "secret-key-32-bytes-long-for-test"
+    token_default = oxyjwt.encode(payload, secret, algorithm="HS256")
+    token_explicit = oxyjwt.encode(
+        payload, secret, algorithm="HS256", headers={"typ": "JWT", "alg": "HS256"}
+    )
+    assert token_default == token_explicit
+    assert oxyjwt.get_unverified_header(token_default) == {"typ": "JWT", "alg": "HS256"}
+
+
+def test_encode_json_static_header_equivalence() -> None:
+    payload_json = '{"sub":"user-42","scope":"read"}'
+    secret = "secret-key-32-bytes-long-for-test"
+    token_default = oxyjwt.encode_json(payload_json, secret, algorithm="HS256")
+    token_explicit = oxyjwt.encode_json(
+        payload_json, secret, algorithm="HS256", headers={"typ": "JWT", "alg": "HS256"}
+    )
+    assert token_default == token_explicit
+
+
+def test_sub_non_string_rejected_by_rust() -> None:
+    secret = "secret-key-32-bytes-long-for-test"
+    token_int_sub = oxyjwt.encode_json('{"sub": 123}', secret)
+    with pytest.raises(oxyjwt.InvalidSubjectError, match="Subject must be a string"):
+        oxyjwt.decode(token_int_sub, secret, algorithms=["HS256"])
+
+    token_list_sub = oxyjwt.encode_json('{"sub": ["admin"]}', secret)
+    with pytest.raises(oxyjwt.InvalidSubjectError, match="Subject must be a string"):
+        oxyjwt.decode(token_list_sub, secret, algorithms=["HS256"])
+
+
+def test_unrequested_aud_rejected_by_rust() -> None:
+    secret = "secret-key-32-bytes-long-for-test"
+    token_with_aud = oxyjwt.encode_json('{"sub": "u", "aud": "api"}', secret)
+    with pytest.raises(oxyjwt.InvalidAudienceError, match="Invalid audience"):
+        oxyjwt.decode(token_with_aud, secret, algorithms=["HS256"])
+
+
 
 
