@@ -160,6 +160,29 @@ pub fn match_standard_header(header_segment: &str) -> Option<jsonwebtoken::Algor
     }
 }
 
+/// Pre-encoded URL-safe unpadded base64 representation of `{"typ":"JWT","alg":"<ALG>"}`.
+///
+/// For standard encodings with default headers, using this constant slice avoids
+/// runtime JSON serialization and base64 encoding on every single `encode` call.
+#[inline]
+pub fn standard_header_base64(algorithm: jsonwebtoken::Algorithm) -> &'static str {
+    use jsonwebtoken::Algorithm;
+    match algorithm {
+        Algorithm::HS256 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9",
+        Algorithm::HS384 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzM4NCJ9",
+        Algorithm::HS512 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9",
+        Algorithm::RS256 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9",
+        Algorithm::RS384 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzM4NCJ9",
+        Algorithm::RS512 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzUxMiJ9",
+        Algorithm::PS256 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJQUzI1NiJ9",
+        Algorithm::PS384 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJQUzM4NCJ9",
+        Algorithm::PS512 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJQUzUxMiJ9",
+        Algorithm::ES256 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9",
+        Algorithm::ES384 => "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzM4NCJ9",
+        Algorithm::EdDSA => "eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9",
+    }
+}
+
 #[derive(Debug)]
 pub struct FastHeaderSummary {
     pub algorithm: jsonwebtoken::Algorithm,
@@ -718,5 +741,36 @@ mod tests {
             resolve_header_alg_and_crit(invalid_json),
             Err(errors::DecodeFail::Decode(_))
         ));
+    }
+
+    #[test]
+    fn standard_header_base64_matches_header_new() {
+        use jsonwebtoken::{Algorithm, Header};
+
+        let algorithms = [
+            Algorithm::HS256,
+            Algorithm::HS384,
+            Algorithm::HS512,
+            Algorithm::RS256,
+            Algorithm::RS384,
+            Algorithm::RS512,
+            Algorithm::PS256,
+            Algorithm::PS384,
+            Algorithm::PS512,
+            Algorithm::ES256,
+            Algorithm::ES384,
+            Algorithm::EdDSA,
+        ];
+
+        for alg in algorithms {
+            let header = Header::new(alg);
+            let json = serde_json::to_vec(&header).unwrap();
+            let b64 = URL_SAFE_NO_PAD.encode(&json);
+            assert_eq!(
+                standard_header_base64(alg),
+                b64,
+                "mismatch for algorithm {alg:?}"
+            );
+        }
     }
 }

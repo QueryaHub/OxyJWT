@@ -13,6 +13,13 @@
 
 ### Performance
 
+- **Pre-encoded static base64 headers and native fast-path claim verification.**
+  In `encode` and `encode_json`, tokens with standard default headers now use
+  pre-encoded immutable base64 header slices, eliminating runtime `Header` JSON
+  serialization and base64 allocation. In `decode`, standard claim validations
+  (`iat`, unrequested `aud` rejection, and `sub` type checks) now execute entirely
+  within the Rust core, allowing the fast-path decode to return the claims dictionary
+  directly without redundant Python-side re-checks (#150).
 - **Eliminate triple JSON round-trip in `DecodingKey.from_jwk`.**
   Materializing a decoding key from a JWK Python dictionary now bypasses intermediate
   `serde_json::Value` DOM allocations and re-serialization. The dictionary is

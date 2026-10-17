@@ -1,9 +1,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use jsonwebtoken::errors::ErrorKind;
-use jsonwebtoken::{
-    crypto::verify as jwt_crypto_verify, encode as jwt_encode, DecodingKey, Header,
-};
+use jsonwebtoken::{crypto::verify as jwt_crypto_verify, DecodingKey, Header};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use serde_json::Value;
@@ -192,6 +190,17 @@ fn signing_input_string(header: &[u8], payload: &[u8]) -> String {
     signing_input
 }
 
+/// Base64url-encode `payload` appending to a pre-encoded base64 `header_b64` directly into one pre-sized
+/// `header.payload` string, skipping header base64 encoding and allocation.
+fn signing_input_with_header_b64(header_b64: &str, payload: &[u8]) -> String {
+    let mut signing_input =
+        String::with_capacity(header_b64.len() + 1 + base64_len_no_pad(payload.len()));
+    signing_input.push_str(header_b64);
+    signing_input.push('.');
+    URL_SAFE_NO_PAD.encode_string(payload, &mut signing_input);
+    signing_input
+}
+
 /// The `aws_lc_rs` padding/digest scheme for an RSA/RSA-PSS algorithm.
 #[cfg(feature = "aws_lc_rs")]
 fn rsa_padding_for(algorithm: jsonwebtoken::Algorithm) -> &'static dyn RsaEncoding {
@@ -257,26 +266,37 @@ pub fn encode(
         return Err(errors::encode_error("payload must be a JSON object"));
     }
 
-    let mut header = Header::new(algorithm);
-    apply_headers(&mut header, headers, algorithm)?;
+    let claims_json = serde_json::to_vec(&claims)
+        .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
+
+    let has_custom_headers = headers.is_some_and(|h| !h.is_none());
+
+    let mut token = if !has_custom_headers {
+        let header_b64 = jws::standard_header_base64(algorithm);
+        signing_input_with_header_b64(header_b64, &claims_json)
+    } else {
+        let mut header = Header::new(algorithm);
+        apply_headers(&mut header, headers, algorithm)?;
+        let header_json = serde_json::to_vec(&header)
+            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+        signing_input_string(&header_json, &claims_json)
+    };
 
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
-        let header_json = serde_json::to_vec(&header)
-            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
-        let claims_json = serde_json::to_vec(&claims)
-            .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
-        let token = signing_input_string(&header_json, &claims_json);
         return py.detach(move || sign_compact_token_with_cached_rsa(token, algorithm, rsa_key));
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
     let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
-    maybe_detach(py, skip_detach, || {
-        jwt_encode(&header, &claims, &encoding_key)
+    maybe_detach(py, skip_detach, move || {
+        let signature = jsonwebtoken::crypto::sign(token.as_bytes(), &encoding_key, algorithm)
+            .map_err(errors::from_jwt_encode_error)?;
+        token.push('.');
+        token.push_str(&signature);
+        Ok(token)
     })
-    .map_err(errors::from_jwt_encode_error)
 }
 
 #[pyfunction]
@@ -320,8 +340,7 @@ pub fn decode(
         .map_err(DecodeFail::Decode)
         .map_err(map_decode_fail)?;
 
-    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
-        .map_err(errors::from_jwt_decode_error)?;
+    claims_validate::validate_claims_dict(&claims, &decode_validation)?;
 
     Ok(claims.into_any().unbind())
 }
@@ -383,8 +402,7 @@ pub fn decode_verified_complete(
         .map_err(DecodeFail::Decode)
         .map_err(map_decode_fail)?;
 
-    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
-        .map_err(errors::from_jwt_decode_error)?;
+    claims_validate::validate_claims_dict(&claims, &decode_validation)?;
 
     let header_py = json_to_py(py, &header)?;
     let sig_py = PyBytes::new(py, &signature);
@@ -436,8 +454,7 @@ fn decode_rfc7797_verified_complete(
         .map_err(DecodeFail::Decode)
         .map_err(map_decode_fail)?;
 
-    claims_validate::validate_claims_dict(&claims, &decode_validation.validation)
-        .map_err(errors::from_jwt_decode_error)?;
+    claims_validate::validate_claims_dict(&claims, decode_validation)?;
 
     let header_py = json_to_py(py, &parts.header)?;
     let sig_py = PyBytes::new(py, &signature);
@@ -574,13 +591,19 @@ pub fn encode_json(
 ) -> PyResult<String> {
     let payload_bytes = extract_payload_object_bytes(payload_json)?;
     let algorithm = parse_algorithm(algorithm)?;
-    let mut header = Header::new(algorithm);
-    apply_headers(&mut header, headers, algorithm)?;
 
-    let header_json = serde_json::to_vec(&header)
-        .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+    let has_custom_headers = headers.is_some_and(|h| !h.is_none());
 
-    let mut token = signing_input_string(&header_json, payload_bytes);
+    let mut token = if !has_custom_headers {
+        let header_b64 = jws::standard_header_base64(algorithm);
+        signing_input_with_header_b64(header_b64, payload_bytes)
+    } else {
+        let mut header = Header::new(algorithm);
+        apply_headers(&mut header, headers, algorithm)?;
+        let header_json = serde_json::to_vec(&header)
+            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+        signing_input_string(&header_json, payload_bytes)
+    };
 
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {

@@ -239,7 +239,7 @@ class PyJWT:
                             '"detached_payload" argument to decode a message '
                             "having the b64 header set to false."
                         )
-            payload = _oxyjwt.decode(
+            return _oxyjwt.decode(
                 token,
                 key,
                 algorithms,
@@ -247,12 +247,6 @@ class PyJWT:
                 issuer=issuer,
                 subject=subject,
             )
-            self._validate_claims_default(
-                payload,
-                audience_checked=audience is not None,
-                subject_checked=subject is not None,
-            )
-            return payload
         if kwargs:
             warnings.warn(
                 "passing additional kwargs to decode() is deprecated "
@@ -325,11 +319,6 @@ class PyJWT:
                 audience=audience,
                 issuer=issuer,
                 subject=subject,
-            )
-            self._validate_claims_default(
-                payload,
-                audience_checked=audience is not None,
-                subject_checked=subject is not None,
             )
             return {"payload": payload, "header": header, "signature": signature}
         if kwargs:
@@ -569,30 +558,24 @@ class PyJWT:
         """
         self._validate_required(payload, options)
         now = time.time()
-        if "iat" in payload and options.get("verify_iat", True):
-            self._validate_iat_fields(payload, now, leeway)
         if not rust_time_claims:
+            if "iat" in payload and options.get("verify_iat", True):
+                self._validate_iat_fields(payload, now, leeway)
             if "nbf" in payload and options.get("verify_nbf", True):
                 self._validate_nbf_fields(payload, now, leeway)
-        if "exp" in payload and options.get("verify_exp", True):
-            self._validate_exp_fields(payload, now, leeway)
+            if "exp" in payload and options.get("verify_exp", True):
+                self._validate_exp_fields(payload, now, leeway)
         strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
-            if strict_aud or not (
-                rust_standard_claims and audience is not None
-            ):
+            if strict_aud or not rust_standard_claims:
                 self._validate_aud_field(
                     payload,
                     audience,
                     strict=strict_aud,
                 )
-        if options.get("verify_iss", True) and (
-            issuer is not None or not rust_standard_claims
-        ):
+        if options.get("verify_iss", True) and not rust_standard_claims:
             self._validate_iss_field(payload, issuer)
-        if options.get("verify_sub", True) and not (
-            rust_standard_claims and subject is not None
-        ):
+        if options.get("verify_sub", True) and not rust_standard_claims:
             self._validate_sub_field(payload, subject)
 
     @staticmethod

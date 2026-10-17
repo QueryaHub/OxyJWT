@@ -7,6 +7,8 @@ use crate::errors;
 
 pub struct DecodeValidation {
     pub validation: Validation,
+    pub validate_iat: bool,
+    pub validate_sub: bool,
 }
 
 impl DecodeValidation {
@@ -45,6 +47,8 @@ pub fn build_validation(
     validation.leeway = leeway_as_u64(leeway);
     validation.validate_exp = opts.flag("verify_exp", true)?;
     validation.validate_nbf = opts.flag("verify_nbf", true)?;
+    let validate_iat = opts.flag("verify_iat", true)?;
+    let validate_sub = opts.flag("verify_sub", true)?;
 
     // `Validation::new` pre-seeds `exp`; keep it only if the caller asked for it.
     if !opts.flag("require_exp", false)? {
@@ -67,7 +71,7 @@ pub fn build_validation(
             validation.validate_aud = false;
         }
     } else {
-        validation.validate_aud = false;
+        validation.validate_aud = verify_aud;
     }
 
     if opts.flag("verify_iss", true)? {
@@ -78,11 +82,15 @@ pub fn build_validation(
         }
     }
 
-    if opts.flag("verify_sub", true)? {
+    if validate_sub {
         validation.sub = subject;
     }
 
-    Ok(DecodeValidation { validation })
+    Ok(DecodeValidation {
+        validation,
+        validate_iat,
+        validate_sub,
+    })
 }
 
 /// The decode `options` mapping, cast once and then queried by key.
