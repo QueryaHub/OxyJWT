@@ -1,10 +1,9 @@
 use jsonwebtoken::{Algorithm, DecodingKey as JwtDecodingKey, EncodingKey as JwtEncodingKey};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyByteArray, PyBytes, PyString};
 use zeroize::Zeroizing;
 
 use crate::algorithms::{ensure_algorithm_family, ensure_single_family, KeyFamily};
-use crate::claims;
 use crate::errors;
 
 #[cfg(feature = "aws_lc_rs")]
@@ -149,21 +148,37 @@ impl DecodingKey {
 
     #[staticmethod]
     pub fn from_jwk(jwk: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let raw = if let Ok(value) = jwk.extract::<String>() {
-            value
+        let jwk_parsed: jsonwebtoken::jwk::Jwk = if let Ok(py_str) = jwk.cast::<PyString>() {
+            let s = py_str.to_str()?;
+            serde_json::from_str(s)
+                .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?
+        } else if let Ok(py_bytes) = jwk.cast::<PyBytes>() {
+            serde_json::from_slice(py_bytes.as_bytes())
+                .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?
+        } else if let Ok(py_bytearray) = jwk.cast::<PyByteArray>() {
+            let bytes = unsafe { py_bytearray.as_bytes() };
+            serde_json::from_slice(bytes)
+                .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?
         } else {
-            let value = claims::py_to_json_for_decode(jwk)?;
-            serde_json::to_string(&value)
+            let py = jwk.py();
+            let orjson = py
+                .import(pyo3::intern!(py, "orjson"))
+                .map_err(|err| errors::invalid_key(format!("invalid JWK value: {err}")))?;
+            let dumped = orjson
+                .call_method1(pyo3::intern!(py, "dumps"), (jwk,))
+                .map_err(|err| errors::invalid_key(format!("invalid JWK value: {err}")))?;
+            let slice = dumped
+                .cast::<PyBytes>()
                 .map_err(|err| errors::invalid_key(format!("invalid JWK value: {err}")))?
+                .as_bytes();
+            serde_json::from_slice(slice)
+                .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?
         };
-
-        let jwk = serde_json::from_str(&raw)
-            .map_err(|err| errors::invalid_key(format!("invalid JWK: {err}")))?;
 
         Ok(Self {
             material: DecodingKeyMaterial::new(
                 KeyFamily::Jwk,
-                JwtDecodingKey::from_jwk(&jwk).map_err(errors::from_jwt_decode_error)?,
+                JwtDecodingKey::from_jwk(&jwk_parsed).map_err(errors::from_jwt_decode_error)?,
             ),
         })
     }

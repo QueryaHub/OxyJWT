@@ -17,9 +17,9 @@ from oxyjwt.exceptions import (
 from oxyjwt.warnings import PyJWKSetSkipWarning
 
 
-def _as_dict(jwk: Mapping[str, Any] | str) -> dict[str, Any]:
-    if isinstance(jwk, str):
-        return cast("dict[str, Any]", orjson.loads(jwk.encode("utf-8")))
+def _as_dict(jwk: Mapping[str, Any] | str | bytes) -> dict[str, Any]:
+    if isinstance(jwk, (str, bytes)):
+        return cast("dict[str, Any]", orjson.loads(jwk))
     return dict(jwk)
 
 
@@ -32,7 +32,7 @@ def _reject_encryption_jwk(data: dict[str, Any]) -> None:
 
 
 class PyJWK:
-    def __init__(self, jwk: Mapping[str, Any] | str, algorithm: str | None = None) -> None:
+    def __init__(self, jwk: Mapping[str, Any] | str | bytes, algorithm: str | None = None) -> None:
         data = _as_dict(jwk)
         if not data.get("kty"):
             raise InvalidKeyError(f"kty is not found: {data!r}")
@@ -60,8 +60,8 @@ class PyJWK:
         return PyJWK(obj, algorithm)
 
     @staticmethod
-    def from_json(data: str, algorithm: str | None = None) -> PyJWK:
-        return PyJWK.from_dict(orjson.loads(data.encode("utf-8")), algorithm)
+    def from_json(data: str | bytes, algorithm: str | None = None) -> PyJWK:
+        return PyJWK.from_dict(orjson.loads(data), algorithm)
 
     @property
     def key_type(self) -> str | None:
@@ -147,8 +147,8 @@ class PyJWKSet:
         return PyJWKSet([x for x in ks if isinstance(x, dict)])
 
     @staticmethod
-    def from_json(data: str) -> PyJWKSet:
-        return PyJWKSet.from_dict(orjson.loads(data.encode("utf-8")))
+    def from_json(data: str | bytes) -> PyJWKSet:
+        return PyJWKSet.from_dict(orjson.loads(data))
 
     def __getitem__(self, kid: str) -> PyJWK:
         if kid in self._materialized:

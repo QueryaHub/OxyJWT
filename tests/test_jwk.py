@@ -222,3 +222,62 @@ def test_pyjwk_and_pyjwkset_concurrent_materialization() -> None:
     assert errors == []
 
 
+def test_decoding_key_from_jwk_str_bytes_bytearray_dict() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    jwk_dict = {"kty": "oct", "k": k, "kid": "k1"}
+    jwk_str = json.dumps(jwk_dict)
+    jwk_bytes = jwk_str.encode("utf-8")
+    jwk_bytearray = bytearray(jwk_bytes)
+
+    key_from_dict = oxyjwt.DecodingKey.from_jwk(jwk_dict)
+    key_from_str = oxyjwt.DecodingKey.from_jwk(jwk_str)
+    key_from_bytes = oxyjwt.DecodingKey.from_jwk(jwk_bytes)
+    key_from_bytearray = oxyjwt.DecodingKey.from_jwk(jwk_bytearray)
+
+    tok = oxyjwt.encode({"sub": "user"}, secret, algorithm="HS256")
+    assert oxyjwt.decode(tok, key_from_dict, algorithms=["HS256"])["sub"] == "user"
+    assert oxyjwt.decode(tok, key_from_str, algorithms=["HS256"])["sub"] == "user"
+    assert oxyjwt.decode(tok, key_from_bytes, algorithms=["HS256"])["sub"] == "user"
+    assert oxyjwt.decode(tok, key_from_bytearray, algorithms=["HS256"])["sub"] == "user"
+
+
+def test_pyjwk_and_pyjwkset_from_json_bytes() -> None:
+    secret = b"signing-key-32-bytes-long-ok!!"
+    k = base64.urlsafe_b64encode(secret).decode("ascii").rstrip("=")
+    jwk_dict = {"kty": "oct", "k": k, "kid": "k1"}
+    jwk_bytes = json.dumps(jwk_dict).encode("utf-8")
+    jwks_bytes = json.dumps({"keys": [jwk_dict]}).encode("utf-8")
+
+    jwk = PyJWK(jwk_bytes)
+    assert jwk.key_id == "k1"
+    assert jwk.key is not None
+
+    jwk_from_json = PyJWK.from_json(jwk_bytes)
+    assert jwk_from_json.key_id == "k1"
+
+    jwks = PyJWKSet.from_json(jwks_bytes)
+    assert jwks["k1"].key is not None
+
+
+def test_decoding_key_from_jwk_error_parity() -> None:
+    from oxyjwt.exceptions import InvalidKeyError
+
+    # Malformed JSON string
+    with pytest.raises(InvalidKeyError, match="invalid JWK:"):
+        oxyjwt.DecodingKey.from_jwk("not a json")
+
+    # Malformed JSON bytes
+    with pytest.raises(InvalidKeyError, match="invalid JWK:"):
+        oxyjwt.DecodingKey.from_jwk(b"{not a json")
+
+    # Non-JWK JSON structure (missing kty)
+    with pytest.raises(InvalidKeyError, match="invalid JWK:"):
+        oxyjwt.DecodingKey.from_jwk({"foo": "bar"})
+
+    # Non-serializable dict key
+    with pytest.raises(InvalidKeyError, match="invalid JWK value:"):
+        oxyjwt.DecodingKey.from_jwk({1: "bad-key-type"})  # type: ignore[dict-item]
+
+
+
