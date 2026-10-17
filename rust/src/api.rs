@@ -231,13 +231,11 @@ fn sign_with_cached_rsa_key(
 /// Build a compact JWS (`header.payload.signature`) from already base64url-ready
 /// JSON bytes, signing with a cached, pre-parsed RSA key.
 #[cfg(feature = "aws_lc_rs")]
-fn sign_compact_with_cached_rsa(
-    header_json: &[u8],
-    payload_json: &[u8],
+fn sign_compact_token_with_cached_rsa(
+    mut token: String,
     algorithm: jsonwebtoken::Algorithm,
     key_pair: &RsaKeyPair,
 ) -> PyResult<String> {
-    let mut token = signing_input_string(header_json, payload_json);
     let signature = sign_with_cached_rsa_key(key_pair, algorithm, token.as_bytes())?;
     token.push('.');
     URL_SAFE_NO_PAD.encode_string(signature, &mut token);
@@ -268,9 +266,8 @@ pub fn encode(
             .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
         let claims_json = serde_json::to_vec(&claims)
             .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
-        return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &claims_json, algorithm, rsa_key)
-        });
+        let token = signing_input_string(&header_json, &claims_json);
+        return py.detach(move || sign_compact_token_with_cached_rsa(token, algorithm, rsa_key));
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
@@ -449,29 +446,20 @@ fn decode_rfc7797_verified_complete(
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    // `parse_compact_header_json` already runs `split_compact_segments` (size
-    // cap + strict three-segment check); a separate `ensure_valid_compact_jwt`
-    // pre-check would just repeat that scan of the whole token. `token: &str`
-    // needs no `to_owned()` either: `py.detach` only requires the closure to
-    // be `Ungil` (`Send`), which a `&str` already is, not `'static`.
-    let header = py
-        .detach(move || jws::parse_compact_header_json(token))
-        .map_err(errors::decode_error)?;
-
+    let header = jws::parse_compact_header_json(token).map_err(errors::decode_error)?;
     json_to_py(py, &header)
 }
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    let payload = py
-        .detach(move || -> Result<Vec<u8>, String> {
-            let (header_segment, payload_segment, _) = jws::split_compact_segments(token)?;
-            jws::decode_header_json(header_segment)?;
-            URL_SAFE_NO_PAD
-                .decode(payload_segment)
-                .map_err(|e| e.to_string())
-        })
-        .map_err(errors::decode_error)?;
+    let (header_segment, payload_segment, _) =
+        jws::split_compact_segments(token).map_err(errors::decode_error)?;
+    if jws::match_standard_header(header_segment).is_none() {
+        jws::decode_header_json(header_segment).map_err(errors::decode_error)?;
+    }
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|e| errors::decode_error(e.to_string()))?;
 
     let claims = deserialize_claims_dict(py, &payload).map_err(errors::decode_error)?;
     Ok(claims.into_any().unbind())
@@ -592,20 +580,17 @@ pub fn encode_json(
     let header_json = serde_json::to_vec(&header)
         .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
 
-    let payload_owned = payload_bytes.to_vec();
+    let mut token = signing_input_string(&header_json, payload_bytes);
 
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
-        return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &payload_owned, algorithm, rsa_key)
-        });
+        return py.detach(move || sign_compact_token_with_cached_rsa(token, algorithm, rsa_key));
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
     let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
     maybe_detach(py, skip_detach, move || {
-        let mut token = signing_input_string(&header_json, &payload_owned);
         let signature = jsonwebtoken::crypto::sign(token.as_bytes(), &encoding_key, algorithm)
             .map_err(errors::from_jwt_encode_error)?;
         token.push('.');
