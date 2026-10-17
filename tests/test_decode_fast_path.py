@@ -225,3 +225,199 @@ class TestEncodeInvariants:
         assert oxyjwt.encode(payload, SECRET, "HS256", sort_headers=True) == (
             oxyjwt.encode(payload, SECRET, "HS256", sort_headers=False)
         )
+
+
+class TestFastPathAudienceIssuerSubject:
+    """Parity tests for audience, issuer, and subject in fast-path decode."""
+
+    @pytest.mark.parametrize(
+        ("payload", "audience"),
+        [
+            ({"aud": "my-aud"}, "my-aud"),
+            ({"aud": ["my-aud", "other-aud"]}, "my-aud"),
+            ({"aud": "wrong-aud"}, "my-aud"),
+            ({"aud": ["wrong-aud"]}, "my-aud"),
+            ({}, "my-aud"),
+            ({"aud": None}, "my-aud"),
+            ({"aud": ""}, "my-aud"),
+            ({"aud": []}, "my-aud"),
+            ({"aud": 123}, "my-aud"),
+            ({"aud": "aud1"}, ["aud1", "aud2"]),
+            ({"aud": "aud2"}, ("aud1", "aud2")),
+            ({"aud": ["aud2", "aud3"]}, ["aud1", "aud2"]),
+            ({"aud": "aud3"}, ["aud1", "aud2"]),
+            ({}, ["aud1", "aud2"]),
+            ({"aud": None}, ["aud1", "aud2"]),
+            ({"aud": ""}, ["aud1", "aud2"]),
+            ({"aud": []}, ["aud1", "aud2"]),
+        ],
+    )
+    def test_audience_fast_path_matches_general(
+        self, payload: dict[str, Any], audience: Any
+    ) -> None:
+        token = oxyjwt.encode(payload, SECRET, "HS256")
+        fast = _outcome(
+            lambda: oxyjwt.decode(
+                token, SECRET, algorithms=["HS256"], audience=audience
+            )
+        )
+        general = _outcome(
+            lambda: oxyjwt.decode(
+                token,
+                SECRET,
+                algorithms=["HS256"],
+                options={},
+                audience=audience,
+            )
+        )
+        assert fast == general
+
+        fast_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token, SECRET, algorithms=["HS256"], audience=audience
+            )
+        )
+        general_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token,
+                SECRET,
+                algorithms=["HS256"],
+                options={},
+                audience=audience,
+            )
+        )
+        assert fast_c == general_c
+
+    @pytest.mark.parametrize(
+        ("payload", "issuer"),
+        [
+            ({"iss": "https://auth.example.com"}, "https://auth.example.com"),
+            ({"iss": "https://other.example.com"}, "https://auth.example.com"),
+            ({}, "https://auth.example.com"),
+            ({"iss": None}, "https://auth.example.com"),
+            ({"iss": 123}, "https://auth.example.com"),
+            ({"iss": "auth1"}, ["auth1", "auth2"]),
+            ({"iss": "auth2"}, ("auth1", "auth2")),
+            ({"iss": "auth3"}, ["auth1", "auth2"]),
+            ({}, ["auth1", "auth2"]),
+            ({"iss": None}, ["auth1", "auth2"]),
+        ],
+    )
+    def test_issuer_fast_path_matches_general(
+        self, payload: dict[str, Any], issuer: Any
+    ) -> None:
+        token = oxyjwt.encode(payload, SECRET, "HS256")
+        fast = _outcome(
+            lambda: oxyjwt.decode(
+                token, SECRET, algorithms=["HS256"], issuer=issuer
+            )
+        )
+        general = _outcome(
+            lambda: oxyjwt.decode(
+                token, SECRET, algorithms=["HS256"], options={}, issuer=issuer
+            )
+        )
+        assert fast == general
+
+        fast_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token, SECRET, algorithms=["HS256"], issuer=issuer
+            )
+        )
+        general_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token, SECRET, algorithms=["HS256"], options={}, issuer=issuer
+            )
+        )
+        assert fast_c == general_c
+
+    @pytest.mark.parametrize(
+        ("payload", "subject"),
+        [
+            ({"sub": "user123"}, "user123"),
+            ({"sub": "user456"}, "user123"),
+            ({}, "user123"),
+            ({"sub": None}, "user123"),
+            ({"sub": 123}, "user123"),
+        ],
+    )
+    def test_subject_fast_path_matches_general(
+        self, payload: dict[str, Any], subject: str
+    ) -> None:
+        token = oxyjwt.encode(payload, SECRET, "HS256")
+        fast = _outcome(
+            lambda: oxyjwt.decode(
+                token, SECRET, algorithms=["HS256"], subject=subject
+            )
+        )
+        general = _outcome(
+            lambda: oxyjwt.decode(
+                token, SECRET, algorithms=["HS256"], options={}, subject=subject
+            )
+        )
+        assert fast == general
+
+        fast_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token, SECRET, algorithms=["HS256"], subject=subject
+            )
+        )
+        general_c = _outcome(
+            lambda: oxyjwt.decode_complete(
+                token,
+                SECRET,
+                algorithms=["HS256"],
+                options={},
+                subject=subject,
+            )
+        )
+        assert fast_c == general_c
+
+    def test_combined_aud_iss_sub_fast_path(self) -> None:
+        payload = {
+            "aud": "my-aud",
+            "iss": "my-iss",
+            "sub": "my-sub",
+            "exp": NOW + 3600,
+            "data": "ok",
+        }
+        token = oxyjwt.encode(payload, SECRET, "HS256")
+
+        fast = oxyjwt.decode(
+            token,
+            SECRET,
+            algorithms=["HS256"],
+            audience="my-aud",
+            issuer="my-iss",
+            subject="my-sub",
+        )
+        general = oxyjwt.decode(
+            token,
+            SECRET,
+            algorithms=["HS256"],
+            options={},
+            audience="my-aud",
+            issuer="my-iss",
+            subject="my-sub",
+        )
+        assert fast == general == payload
+
+        fast_c = oxyjwt.decode_complete(
+            token,
+            SECRET,
+            algorithms=["HS256"],
+            audience="my-aud",
+            issuer="my-iss",
+            subject="my-sub",
+        )
+        general_c = oxyjwt.decode_complete(
+            token,
+            SECRET,
+            algorithms=["HS256"],
+            options={},
+            audience="my-aud",
+            issuer="my-iss",
+            subject="my-sub",
+        )
+        assert fast_c == general_c
+

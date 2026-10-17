@@ -270,3 +270,148 @@ def test_hmac_encode_decode_are_thread_safe_without_gil_release() -> None:
     assert all(results)
 
 
+def test_decode_complex_claims_streaming_deserialization() -> None:
+    payload = {
+        "sub": "user-456",
+        "aud": "https://api.example.com",
+        "iss": "https://auth.example.com",
+        "exp": int(time.time()) + 3600,
+        "bool_true": True,
+        "bool_false": False,
+        "null_val": None,
+        "int_val": 42,
+        "float_val": 3.14159,
+        "nested_list": [1, "two", 3.0, [True, False, None]],
+        "nested_dict": {
+            "level1": {
+                "level2": {
+                    "tag": "deep",
+                    "values": ["a", "b", "c"],
+                }
+            }
+        },
+        "unicode": "Привет, мир! 🚀 123",
+    }
+    secret = "test-secret-with-plenty-of-bytes-for-hs256-security"
+    token = oxyjwt.encode(payload, secret, "HS256")
+    decoded = oxyjwt.decode(
+        token,
+        secret,
+        algorithms=["HS256"],
+        audience="https://api.example.com",
+        issuer="https://auth.example.com",
+    )
+    assert decoded == payload
+
+
+def test_encode_json_str_payload() -> None:
+    payload_str = '{"sub": "user-1", "exp": 2000000000}'
+    token = oxyjwt.encode_json(payload_str, "secret", algorithm="HS256")
+    decoded = oxyjwt.decode(token, "secret", algorithms=["HS256"])
+    assert decoded["sub"] == "user-1"
+    assert decoded["exp"] == 2000000000
+
+
+def test_encode_json_bytes_payload() -> None:
+    payload_b = b'{"sub": "user-2", "role": "admin"}'
+    token = oxyjwt.encode_json(payload_b, "secret")
+    decoded = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded == {"sub": "user-2", "role": "admin"}
+
+
+def test_encode_json_with_headers_and_key_objects() -> None:
+    key = oxyjwt.EncodingKey.from_secret(b"secret-key-123456789012345678901234567890")
+    token = oxyjwt.encode_json(
+        '{"sub": "user-3"}',
+        key,
+        algorithm="HS256",
+        headers={"kid": "key-id-99", "typ": "JWT"},
+    )
+    header = oxyjwt.get_unverified_header(token)
+    assert header["kid"] == "key-id-99"
+    assert header["typ"] == "JWT"
+    decoded = oxyjwt.decode(
+        token,
+        "secret-key-123456789012345678901234567890",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded["sub"] == "user-3"
+
+
+def test_encode_json_pyjwt_class_instance() -> None:
+    inst = oxyjwt.PyJWT()
+    token = inst.encode_json('{"sub": "user-4"}', "secret")
+    decoded = inst.decode(token, "secret", algorithms=["HS256"], options={"verify_exp": False})
+    assert decoded["sub"] == "user-4"
+
+
+def test_encode_json_whitespace_tolerance() -> None:
+    token = oxyjwt.encode_json("  \n\t {\"sub\": \"ws\"} \r\n ", "secret")
+    decoded = oxyjwt.decode(token, "secret", algorithms=["HS256"], options={"verify_exp": False})
+    assert decoded["sub"] == "ws"
+
+
+def test_encode_json_invalid_payload_error() -> None:
+    for invalid in ["[1, 2, 3]", "123", '"just-a-string"', "", "   "]:
+        with pytest.raises(oxyjwt.EncodeError, match="Expecting a dict object"):
+            oxyjwt.encode_json(invalid, "secret")
+
+    with pytest.raises(oxyjwt.EncodeError, match="payload_json must be a UTF-8 str or bytes"):
+        oxyjwt.encode_json(12345, "secret")  # type: ignore[arg-type]
+
+    with pytest.raises(oxyjwt.EncodeError, match="payload_json must be a UTF-8 str or bytes"):
+        oxyjwt.encode_json({"sub": "dict"}, "secret")  # type: ignore[arg-type]
+
+
+def test_encode_json_algorithm_override_rejected() -> None:
+    with pytest.raises(oxyjwt.InvalidAlgorithmError, match="cannot override"):
+        oxyjwt.encode_json('{"sub": "u"}', "secret", algorithm="HS256", headers={"alg": "RS256"})
+
+
+def test_encode_static_header_equivalence() -> None:
+    payload = {"sub": "user-42", "scope": "read"}
+    secret = "secret-key-32-bytes-long-for-test"
+    token_default = oxyjwt.encode(payload, secret, algorithm="HS256")
+    token_explicit = oxyjwt.encode(
+        payload, secret, algorithm="HS256", headers={"typ": "JWT", "alg": "HS256"}
+    )
+    assert token_default == token_explicit
+    assert oxyjwt.get_unverified_header(token_default) == {"typ": "JWT", "alg": "HS256"}
+
+
+def test_encode_json_static_header_equivalence() -> None:
+    payload_json = '{"sub":"user-42","scope":"read"}'
+    secret = "secret-key-32-bytes-long-for-test"
+    token_default = oxyjwt.encode_json(payload_json, secret, algorithm="HS256")
+    token_explicit = oxyjwt.encode_json(
+        payload_json, secret, algorithm="HS256", headers={"typ": "JWT", "alg": "HS256"}
+    )
+    assert token_default == token_explicit
+
+
+def test_sub_non_string_rejected_by_rust() -> None:
+    secret = "secret-key-32-bytes-long-for-test"
+    token_int_sub = oxyjwt.encode_json('{"sub": 123}', secret)
+    with pytest.raises(oxyjwt.InvalidSubjectError, match="Subject must be a string"):
+        oxyjwt.decode(token_int_sub, secret, algorithms=["HS256"])
+
+    token_list_sub = oxyjwt.encode_json('{"sub": ["admin"]}', secret)
+    with pytest.raises(oxyjwt.InvalidSubjectError, match="Subject must be a string"):
+        oxyjwt.decode(token_list_sub, secret, algorithms=["HS256"])
+
+
+def test_unrequested_aud_rejected_by_rust() -> None:
+    secret = "secret-key-32-bytes-long-for-test"
+    token_with_aud = oxyjwt.encode_json('{"sub": "u", "aud": "api"}', secret)
+    with pytest.raises(oxyjwt.InvalidAudienceError, match="Invalid audience"):
+        oxyjwt.decode(token_with_aud, secret, algorithms=["HS256"])
+
+
+
+

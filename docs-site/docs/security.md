@@ -95,6 +95,17 @@ When you pass a raw `str` / `bytes` HMAC secret (or use `EncodingKey.from_secret
 
 OxyJWT rejects compact JWT strings larger than **256 KiB** (same order of magnitude as the default JWKS `max_bytes` cap) with `DecodeError` before base64 or JSON parsing. This applies to verified `decode`, `decode_unverified`, `get_unverified_header`, and `jws_parse_compact`. RFC 7797 **`detached_payload`** bytes passed to verified decode are capped at the same limit before copy or JSON parsing. Legitimate tokens are far smaller; huge inputs are usually denial-of-service attempts.
 
+## Critical Header Parameter Protection (`crit`)
+
+Under RFC 7515 §4.1.11, any extension header specified in the `crit` (Critical) array MUST be understood and processed by the recipient. If an unrecognized header is listed, or if `crit` itself contains invalid types or empty lists, the token must be rejected.
+
+OxyJWT strictly enforces this rule in the native Rust core on **both verified and unverified decode paths**. This prevents attackers from bypassing security checks or injecting arbitrary extension claims into tokens. Only RFC 7797 unencoded payload (`b64`) is accepted if recognized; all unknown critical extensions trigger immediate rejection with `DecodeError`.
+
+## JWK Key Usage Restrictions (`use`)
+
+RFC 7517 distinguishes keys intended for digital signatures (`use: sig`) from keys intended for data encryption (`use: enc`). OxyJWT strictly refuses to materialize `use: enc` keys for signature verification across `PyJWK`, `PyJWKSet`, and `PyJWKClient`. Encrypted-use keys in JWKS sets are safely skipped with a `PyJWKSetSkipWarning`, preventing cross-purpose key misuse attacks.
+
+
 ## Treat Unverified Helpers As Inspection Only
 
 `get_unverified_header` and `decode_unverified` do not verify the signature and do not validate claims.

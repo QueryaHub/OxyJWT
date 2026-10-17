@@ -276,3 +276,75 @@ def test_security_disallowed_alg_rejected_before_jwks_http() -> None:
     with pytest.raises(oxyjwt.InvalidAlgorithmError, match="not allowed"):
         client.get_signing_key_from_jwt(token, algorithms=["RS256"])
     assert _JWKHandler.request_count == 0
+
+
+# --- Critical header extensions rejection (issue #132, RFC 7515 §4.1.11) ---
+
+
+def test_security_rejects_unrecognized_crit_header() -> None:
+    import jwt
+
+    secret = "benchmark-secret-with-at-least-32-bytes-len"
+    token = jwt.encode(
+        {"sub": "user_42", "exp": int(time.time()) + 3600},
+        secret,
+        algorithm="HS256",
+        headers={"crit": ["exp-strict-mode"], "exp-strict-mode": True},
+    )
+
+    with pytest.raises(
+        oxyjwt.InvalidTokenError,
+        match="Unsupported critical header parameter in 'crit': 'exp-strict-mode'",
+    ):
+        oxyjwt.decode(token, secret, algorithms=["HS256"])
+
+    with pytest.raises(
+        oxyjwt.InvalidTokenError,
+        match="Unsupported critical header parameter in 'crit': 'exp-strict-mode'",
+    ):
+        oxyjwt.decode_complete(token, secret, algorithms=["HS256"])
+
+    with pytest.raises(
+        oxyjwt.InvalidTokenError,
+        match="Unsupported critical header parameter in 'crit': 'exp-strict-mode'",
+    ):
+        oxyjwt.decode_complete(token, options={"verify_signature": False})
+
+
+def test_security_rejects_malformed_crit_headers() -> None:
+    import hashlib
+    import hmac
+    import jwt
+
+    secret = "benchmark-secret-with-at-least-32-bytes-len"
+
+    # Empty crit array
+    token_empty = jwt.encode(
+        {"sub": "user_42", "exp": int(time.time()) + 3600},
+        secret,
+        algorithm="HS256",
+        headers={"crit": []},
+    )
+    with pytest.raises(oxyjwt.InvalidTokenError):
+        oxyjwt.decode(token_empty, secret, algorithms=["HS256"])
+
+    # Non-string item in crit
+    h = _b64u(
+        json.dumps(
+            {"alg": "HS256", "typ": "JWT", "crit": [123]},
+            separators=(",", ":"),
+        ).encode()
+    )
+    p = _b64u(
+        json.dumps(
+            {"sub": "user_42", "exp": int(time.time()) + 3600},
+            separators=(",", ":"),
+        ).encode()
+    )
+    sig = _b64u(
+        hmac.new(secret.encode(), f"{h}.{p}".encode(), hashlib.sha256).digest()
+    )
+    token_non_string = f"{h}.{p}.{sig}"
+    with pytest.raises(oxyjwt.InvalidTokenError, match="must be strings"):
+        oxyjwt.decode(token_non_string, secret, algorithms=["HS256"])
+

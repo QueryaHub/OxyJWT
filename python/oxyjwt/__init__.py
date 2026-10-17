@@ -1,6 +1,6 @@
 """OxyJWT public API (PyJWT-shaped module surface)."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from ._oxyjwt import (
     DecodingKey,
@@ -8,7 +8,7 @@ from ._oxyjwt import (
     decode_unverified,
     get_unverified_header,
 )
-from .api_jwt import PyJWT, decode, decode_complete, encode
+from .api_jwt import PyJWT, decode, decode_complete, encode, encode_json
 from .exceptions import (
     DecodeError,
     EncodeError,
@@ -74,5 +74,6 @@ __all__ = [
     "decode_complete",
     "decode_unverified",
     "encode",
+    "encode_json",
     "get_unverified_header",
 ]

@@ -1,9 +1,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use jsonwebtoken::errors::{new_error, ErrorKind};
-use jsonwebtoken::{
-    crypto::verify as jwt_crypto_verify, encode as jwt_encode, DecodingKey, Header,
-};
+use jsonwebtoken::errors::ErrorKind;
+use jsonwebtoken::{crypto::verify as jwt_crypto_verify, DecodingKey, Header};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use serde_json::Value;
@@ -12,9 +10,9 @@ use crate::algorithms::{
     algorithm_family, algorithm_name, ensure_single_family, parse_algorithm, parse_algorithm_name,
     KeyFamily,
 };
-use crate::claims::{json_to_py, py_to_json_for_encode};
+use crate::claims::{deserialize_claims_dict, json_to_py, py_to_json_for_encode};
 use crate::claims_validate;
-use crate::errors;
+use crate::errors::{self, decode_fail, map_decode_fail, DecodeFail};
 use crate::jws;
 use crate::keys::{decoding_key_from_py, encoding_key_from_py};
 use crate::validation::{self, DecodeValidation};
@@ -29,38 +27,10 @@ use aws_lc_rs::signature::{
     RSA_PSS_SHA384, RSA_PSS_SHA512,
 };
 
-/// Failure from a decode step that runs with the GIL released.
-///
-/// Keeping the variants typed (instead of matching on message text) means the
-/// Python exception class is chosen from the failure itself.
-enum DecodeFail {
-    Jwt(jsonwebtoken::errors::Error),
-    Decode(String),
-    Token(String),
-}
-
-impl From<jsonwebtoken::errors::Error> for DecodeFail {
-    fn from(err: jsonwebtoken::errors::Error) -> Self {
-        DecodeFail::Jwt(err)
-    }
-}
-
-fn decode_fail(kind: ErrorKind) -> DecodeFail {
-    DecodeFail::Jwt(new_error(kind))
-}
-
-fn map_decode_fail(fail: DecodeFail) -> PyErr {
-    match fail {
-        DecodeFail::Jwt(err) => errors::from_jwt_decode_error(err),
-        DecodeFail::Decode(message) => errors::decode_error(message),
-        DecodeFail::Token(message) => errors::invalid_token(message),
-    }
-}
-
-/// Verified claims plus the protected header, both parsed exactly once.
-struct VerifiedToken {
-    header: Value,
-    claims: Value,
+struct VerifiedTokenParts {
+    header: Option<Value>,
+    payload: Vec<u8>,
+    signature: Option<Vec<u8>>,
 }
 
 /// Verify a compact JWT and parse it in a single pass, optionally also
@@ -72,30 +42,36 @@ struct VerifiedToken {
 /// itself afterwards (as a separate `extract_signature_bytes` call used to).
 /// A second small, bounded decode of the signature segment alone is the
 /// trade-off for not re-scanning the (potentially much larger) full token.
-///
-/// `jsonwebtoken::decode` parses the header twice and the payload twice (once
-/// for the caller's type, once for its internal validation struct) and returns
-/// a `Header` struct that we would have to re-serialize to hand back to Python.
-/// Doing the steps here keeps it to one header parse, one payload parse and one
-/// signature check, and lets us reuse the already-parsed header as the Python
-/// header dict.
 fn verify_and_parse_impl(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
+    with_header: bool,
     with_signature: bool,
-) -> Result<(VerifiedToken, Option<Vec<u8>>), DecodeFail> {
+) -> Result<VerifiedTokenParts, DecodeFail> {
     let (header_segment, payload_segment, signature_segment) =
         jws::split_compact_segments(token).map_err(DecodeFail::Decode)?;
 
-    let header = jws::decode_header_json(header_segment).map_err(DecodeFail::Decode)?;
-    let algorithm = header_algorithm(&header)?;
-    if !decode_validation.algorithms().contains(&algorithm) {
-        return Err(decode_fail(ErrorKind::InvalidAlgorithm));
-    }
-    // jsonwebtoken rejects an allow-list spanning several key families; keys
-    // built from a JWK skip the equivalent check in `keys.rs`.
-    ensure_single_family_for_decode(decode_validation.algorithms())?;
+    let (header, algorithm) = if with_header {
+        let header = jws::decode_header_json(header_segment).map_err(DecodeFail::Decode)?;
+        let algorithm = header_algorithm(&header)?;
+        if !decode_validation.algorithms().contains(&algorithm) {
+            return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+        }
+        ensure_single_family_for_decode(decode_validation.algorithms())?;
+        jws::validate_crit_header(&header, &[]).map_err(DecodeFail::Token)?;
+        (Some(header), algorithm)
+    } else {
+        let summary = jws::resolve_header_alg_and_crit(header_segment)?;
+        if !decode_validation.algorithms().contains(&summary.algorithm) {
+            return Err(decode_fail(ErrorKind::InvalidAlgorithm));
+        }
+        ensure_single_family_for_decode(decode_validation.algorithms())?;
+        if let Some(crit_val) = summary.crit {
+            jws::validate_crit_value(&crit_val, &[]).map_err(DecodeFail::Token)?;
+        }
+        (None, summary.algorithm)
+    };
 
     let signing_input = jws::signing_input_of(token, header_segment, payload_segment);
     if !jwt_crypto_verify(signature_segment, signing_input, decoding_key, algorithm)? {
@@ -110,38 +86,35 @@ fn verify_and_parse_impl(
     let payload = URL_SAFE_NO_PAD
         .decode(payload_segment)
         .map_err(|err| DecodeFail::Decode(err.to_string()))?;
-    let claims: Value =
-        serde_json::from_slice(&payload).map_err(|err| DecodeFail::Decode(err.to_string()))?;
-    if !claims.is_object() {
-        return Err(DecodeFail::Decode(
-            "Invalid payload string: must be a json object".to_owned(),
-        ));
-    }
 
-    claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
-
-    Ok((VerifiedToken { header, claims }, signature))
+    Ok(VerifiedTokenParts {
+        header,
+        payload,
+        signature,
+    })
 }
 
 fn verify_and_parse(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<VerifiedToken, DecodeFail> {
-    verify_and_parse_impl(token, decoding_key, decode_validation, false)
-        .map(|(verified, _)| verified)
+) -> Result<Vec<u8>, DecodeFail> {
+    let parts = verify_and_parse_impl(token, decoding_key, decode_validation, false, false)?;
+    Ok(parts.payload)
 }
 
 fn verify_and_parse_with_signature(
     token: &str,
     decoding_key: &DecodingKey,
     decode_validation: &DecodeValidation,
-) -> Result<(VerifiedToken, Vec<u8>), DecodeFail> {
-    let (verified, signature) =
-        verify_and_parse_impl(token, decoding_key, decode_validation, true)?;
+) -> Result<(Value, Vec<u8>, Vec<u8>), DecodeFail> {
+    let parts = verify_and_parse_impl(token, decoding_key, decode_validation, true, true)?;
     Ok((
-        verified,
-        signature.expect("with_signature=true always returns Some"),
+        parts.header.expect("with_header=true always returns Some"),
+        parts.payload,
+        parts
+            .signature
+            .expect("with_signature=true always returns Some"),
     ))
 }
 
@@ -217,6 +190,17 @@ fn signing_input_string(header: &[u8], payload: &[u8]) -> String {
     signing_input
 }
 
+/// Base64url-encode `payload` appending to a pre-encoded base64 `header_b64` directly into one pre-sized
+/// `header.payload` string, skipping header base64 encoding and allocation.
+fn signing_input_with_header_b64(header_b64: &str, payload: &[u8]) -> String {
+    let mut signing_input =
+        String::with_capacity(header_b64.len() + 1 + base64_len_no_pad(payload.len()));
+    signing_input.push_str(header_b64);
+    signing_input.push('.');
+    URL_SAFE_NO_PAD.encode_string(payload, &mut signing_input);
+    signing_input
+}
+
 /// The `aws_lc_rs` padding/digest scheme for an RSA/RSA-PSS algorithm.
 #[cfg(feature = "aws_lc_rs")]
 fn rsa_padding_for(algorithm: jsonwebtoken::Algorithm) -> &'static dyn RsaEncoding {
@@ -256,13 +240,11 @@ fn sign_with_cached_rsa_key(
 /// Build a compact JWS (`header.payload.signature`) from already base64url-ready
 /// JSON bytes, signing with a cached, pre-parsed RSA key.
 #[cfg(feature = "aws_lc_rs")]
-fn sign_compact_with_cached_rsa(
-    header_json: &[u8],
-    payload_json: &[u8],
+fn sign_compact_token_with_cached_rsa(
+    mut token: String,
     algorithm: jsonwebtoken::Algorithm,
     key_pair: &RsaKeyPair,
 ) -> PyResult<String> {
-    let mut token = signing_input_string(header_json, payload_json);
     let signature = sign_with_cached_rsa_key(key_pair, algorithm, token.as_bytes())?;
     token.push('.');
     URL_SAFE_NO_PAD.encode_string(signature, &mut token);
@@ -284,27 +266,37 @@ pub fn encode(
         return Err(errors::encode_error("payload must be a JSON object"));
     }
 
-    let mut header = Header::new(algorithm);
-    apply_headers(&mut header, headers, algorithm)?;
+    let claims_json = serde_json::to_vec(&claims)
+        .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
+
+    let has_custom_headers = headers.is_some_and(|h| !h.is_none());
+
+    let mut token = if !has_custom_headers {
+        let header_b64 = jws::standard_header_base64(algorithm);
+        signing_input_with_header_b64(header_b64, &claims_json)
+    } else {
+        let mut header = Header::new(algorithm);
+        apply_headers(&mut header, headers, algorithm)?;
+        let header_json = serde_json::to_vec(&header)
+            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+        signing_input_string(&header_json, &claims_json)
+    };
 
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
-        let header_json = serde_json::to_vec(&header)
-            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
-        let claims_json = serde_json::to_vec(&claims)
-            .map_err(|e| errors::encode_error(format!("failed to serialize claims: {e}")))?;
-        return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &claims_json, algorithm, rsa_key)
-        });
+        return py.detach(move || sign_compact_token_with_cached_rsa(token, algorithm, rsa_key));
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
     let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
-    maybe_detach(py, skip_detach, || {
-        jwt_encode(&header, &claims, &encoding_key)
+    maybe_detach(py, skip_detach, move || {
+        let signature = jsonwebtoken::crypto::sign(token.as_bytes(), &encoding_key, algorithm)
+            .map_err(errors::from_jwt_encode_error)?;
+        token.push('.');
+        token.push_str(&signature);
+        Ok(token)
     })
-    .map_err(errors::from_jwt_encode_error)
 }
 
 #[pyfunction]
@@ -339,12 +331,18 @@ pub fn decode(
     let decoding_key = decoding_key_from_py(key, decode_validation.algorithms())?;
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
 
-    let verified = maybe_detach(py, skip_detach, || {
+    let payload = maybe_detach(py, skip_detach, || {
         verify_and_parse(token, &decoding_key, &decode_validation)
     })
     .map_err(map_decode_fail)?;
 
-    json_to_py(py, &verified.claims)
+    let claims = deserialize_claims_dict(py, &payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, &decode_validation)?;
+
+    Ok(claims.into_any().unbind())
 }
 
 type DecodeVerifiedCompleteOutput = (Py<PyAny>, Py<PyAny>, Py<PyBytes>);
@@ -395,15 +393,20 @@ pub fn decode_verified_complete(
     }
 
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
-    let (verified, signature) = maybe_detach(py, skip_detach, || {
+    let (header, payload, signature) = maybe_detach(py, skip_detach, || {
         verify_and_parse_with_signature(token, &decoding_key, &decode_validation)
     })
     .map_err(map_decode_fail)?;
 
-    let claims_py = json_to_py(py, &verified.claims)?;
-    let header_py = json_to_py(py, &verified.header)?;
+    let claims = deserialize_claims_dict(py, &payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, &decode_validation)?;
+
+    let header_py = json_to_py(py, &header)?;
     let sig_py = PyBytes::new(py, &signature);
-    Ok((claims_py, header_py, sig_py.into()))
+    Ok((claims.into_any().unbind(), header_py, sig_py.into()))
 }
 
 fn decode_rfc7797_verified_complete(
@@ -421,15 +424,8 @@ fn decode_rfc7797_verified_complete(
     }
 
     let skip_detach = algorithms_are_all_hmac(decode_validation.algorithms());
-    let (parts, claims, signature) = maybe_detach(py, skip_detach, || -> Result<_, DecodeFail> {
+    let (parts, signature) = maybe_detach(py, skip_detach, || -> Result<_, DecodeFail> {
         let parts = jws::parse_rfc7797_compact(token).map_err(DecodeFail::Token)?;
-        let claims: Value = serde_json::from_slice(detached_payload)
-            .map_err(|err| DecodeFail::Decode(format!("Invalid payload string: {err}")))?;
-        if !claims.is_object() {
-            return Err(DecodeFail::Decode(
-                "Invalid payload string: must be a json object".to_owned(),
-            ));
-        }
 
         let algorithm = header_algorithm(&parts.header)?;
         if !decode_validation.algorithms().contains(&algorithm) {
@@ -447,51 +443,43 @@ fn decode_rfc7797_verified_complete(
             return Err(decode_fail(ErrorKind::InvalidSignature));
         }
 
-        claims_validate::validate_claims_value(&claims, &decode_validation.validation)?;
-
         let signature = URL_SAFE_NO_PAD
             .decode(&parts.signature_segment)
             .map_err(|err| DecodeFail::Decode(err.to_string()))?;
-        Ok((parts, claims, signature))
+        Ok((parts, signature))
     })
     .map_err(map_decode_fail)?;
 
+    let claims = deserialize_claims_dict(py, detached_payload)
+        .map_err(DecodeFail::Decode)
+        .map_err(map_decode_fail)?;
+
+    claims_validate::validate_claims_dict(&claims, decode_validation)?;
+
     let header_py = json_to_py(py, &parts.header)?;
-    let claims_py = json_to_py(py, &claims)?;
     let sig_py = PyBytes::new(py, &signature);
-    Ok((claims_py, header_py, sig_py.into()))
+    Ok((claims.into_any().unbind(), header_py, sig_py.into()))
 }
 
 #[pyfunction]
 pub fn get_unverified_header(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    // `parse_compact_header_json` already runs `split_compact_segments` (size
-    // cap + strict three-segment check); a separate `ensure_valid_compact_jwt`
-    // pre-check would just repeat that scan of the whole token. `token: &str`
-    // needs no `to_owned()` either: `py.detach` only requires the closure to
-    // be `Ungil` (`Send`), which a `&str` already is, not `'static`.
-    let header = py
-        .detach(move || jws::parse_compact_header_json(token))
-        .map_err(errors::decode_error)?;
-
+    let header = jws::parse_compact_header_json(token).map_err(errors::decode_error)?;
     json_to_py(py, &header)
 }
 
 #[pyfunction]
 pub fn decode_unverified(py: Python<'_>, token: &str) -> PyResult<Py<PyAny>> {
-    // `jsonwebtoken::dangerous::insecure_decode` re-implements its own
-    // lenient segment split (silently misparsing a token with extra `.`s
-    // rather than rejecting it) and, being generic over the return type,
-    // fully deserializes the header into `jsonwebtoken`'s own `Header`
-    // struct even though only `.claims` is ever read here. Reusing our own
-    // strict, single-pass `jws` helpers instead means one split (with our
-    // size cap and segment-count check), a JSON-object check on the header
-    // to reject a malformed one, and a payload parse -- with the header
-    // value itself never even converted to a Python object.
-    let claims = py
-        .detach(move || jws::parse_compact_claims_unverified(token))
-        .map_err(errors::decode_error)?;
+    let (header_segment, payload_segment, _) =
+        jws::split_compact_segments(token).map_err(errors::decode_error)?;
+    if jws::match_standard_header(header_segment).is_none() {
+        jws::decode_header_json(header_segment).map_err(errors::decode_error)?;
+    }
+    let payload = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|e| errors::decode_error(e.to_string()))?;
 
-    json_to_py(py, &claims)
+    let claims = deserialize_claims_dict(py, &payload).map_err(errors::decode_error)?;
+    Ok(claims.into_any().unbind())
 }
 
 fn apply_headers(
@@ -603,26 +591,29 @@ pub fn encode_json(
 ) -> PyResult<String> {
     let payload_bytes = extract_payload_object_bytes(payload_json)?;
     let algorithm = parse_algorithm(algorithm)?;
-    let mut header = Header::new(algorithm);
-    apply_headers(&mut header, headers, algorithm)?;
 
-    let header_json = serde_json::to_vec(&header)
-        .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+    let has_custom_headers = headers.is_some_and(|h| !h.is_none());
 
-    let payload_owned = payload_bytes.to_vec();
+    let mut token = if !has_custom_headers {
+        let header_b64 = jws::standard_header_base64(algorithm);
+        signing_input_with_header_b64(header_b64, payload_bytes)
+    } else {
+        let mut header = Header::new(algorithm);
+        apply_headers(&mut header, headers, algorithm)?;
+        let header_json = serde_json::to_vec(&header)
+            .map_err(|e| errors::encode_error(format!("failed to serialize header: {e}")))?;
+        signing_input_string(&header_json, payload_bytes)
+    };
 
     #[cfg(feature = "aws_lc_rs")]
     if let Some(rsa_key) = cached_rsa_encoding_key_from_py(key, algorithm)? {
-        return py.detach(move || {
-            sign_compact_with_cached_rsa(&header_json, &payload_owned, algorithm, rsa_key)
-        });
+        return py.detach(move || sign_compact_token_with_cached_rsa(token, algorithm, rsa_key));
     }
 
     let encoding_key = encoding_key_from_py(key, algorithm)?;
     let skip_detach = algorithm_family(algorithm) == KeyFamily::Hmac;
 
     maybe_detach(py, skip_detach, move || {
-        let mut token = signing_input_string(&header_json, &payload_owned);
         let signature = jsonwebtoken::crypto::sign(token.as_bytes(), &encoding_key, algorithm)
             .map_err(errors::from_jwt_encode_error)?;
         token.push('.');

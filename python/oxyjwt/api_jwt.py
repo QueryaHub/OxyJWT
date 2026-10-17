@@ -173,6 +173,16 @@ class PyJWT:
             )
         return _oxyjwt.encode_json(body_b, key, alg, headers)
 
+    def encode_json(
+        self,
+        payload_json: str | bytes,
+        key: object,
+        algorithm: str | None = "HS256",
+        headers: dict[str, Any] | None = None,
+    ) -> str:
+        alg = algorithm if algorithm is not None else "HS256"
+        return _oxyjwt.encode_json(payload_json, key, alg, headers)
+
     def decode(
         self,
         jwt: str | bytes,
@@ -202,15 +212,15 @@ class PyJWT:
             self._default_options
             and not kwargs
             and options is None
-            and audience is None
-            and issuer is None
-            and subject is None
             and typ is None
             and detached_payload is None
             and verify is None
             and leeway == 0
             and bool(algorithms)
             and isinstance(algorithms, (list, tuple))
+            and (audience is None or isinstance(audience, (str, list, tuple)))
+            and (issuer is None or isinstance(issuer, (str, list, tuple)))
+            and (subject is None or isinstance(subject, str))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
             # Inlined `_require_detached_payload_for_rfc7797` for the same
@@ -229,9 +239,14 @@ class PyJWT:
                             '"detached_payload" argument to decode a message '
                             "having the b64 header set to false."
                         )
-            payload = _oxyjwt.decode(token, key, algorithms)
-            self._validate_claims_default(payload)
-            return payload
+            return _oxyjwt.decode(
+                token,
+                key,
+                algorithms,
+                audience=audience,
+                issuer=issuer,
+                subject=subject,
+            )
         if kwargs:
             warnings.warn(
                 "passing additional kwargs to decode() is deprecated "
@@ -276,15 +291,15 @@ class PyJWT:
             self._default_options
             and not kwargs
             and options is None
-            and audience is None
-            and issuer is None
-            and subject is None
             and typ is None
             and detached_payload is None
             and verify is None
             and leeway == 0
             and bool(algorithms)
             and isinstance(algorithms, (list, tuple))
+            and (audience is None or isinstance(audience, (str, list, tuple)))
+            and (issuer is None or isinstance(issuer, (str, list, tuple)))
+            and (subject is None or isinstance(subject, str))
         ):
             token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
             if ".." in token:
@@ -298,9 +313,13 @@ class PyJWT:
                             "having the b64 header set to false."
                         )
             payload, header, signature = _oxyjwt.decode_verified_complete(
-                token, key, algorithms
+                token,
+                key,
+                algorithms,
+                audience=audience,
+                issuer=issuer,
+                subject=subject,
             )
-            self._validate_claims_default(payload)
             return {"payload": payload, "header": header, "signature": signature}
         if kwargs:
             first = next(iter(kwargs))
@@ -456,7 +475,13 @@ class PyJWT:
             "signature": _sig_as_bytes(sigb),
         }
 
-    def _validate_claims_default(self, payload: dict[str, Any]) -> None:
+    def _validate_claims_default(
+        self,
+        payload: dict[str, Any],
+        *,
+        audience_checked: bool = False,
+        subject_checked: bool = False,
+    ) -> None:
         """Claim checks left to Python after a plain verified decode.
 
         Equivalent to :meth:`_validate_claims` with default options, no
@@ -501,12 +526,13 @@ class PyJWT:
                 if exp_value <= now:
                     raise ExpiredSignatureError("Signature has expired")
 
-        if payload.get("aud"):
+        if not audience_checked and payload.get("aud"):
             raise InvalidAudienceError("Invalid audience")
 
-        sub = payload.get("sub", _MISSING)
-        if sub is not _MISSING and not isinstance(sub, str):
-            raise InvalidSubjectError("Subject must be a string")
+        if not subject_checked:
+            sub = payload.get("sub", _MISSING)
+            if sub is not _MISSING and not isinstance(sub, str):
+                raise InvalidSubjectError("Subject must be a string")
 
     def _validate_claims(
         self,
@@ -532,30 +558,24 @@ class PyJWT:
         """
         self._validate_required(payload, options)
         now = time.time()
-        if "iat" in payload and options.get("verify_iat", True):
-            self._validate_iat_fields(payload, now, leeway)
         if not rust_time_claims:
+            if "iat" in payload and options.get("verify_iat", True):
+                self._validate_iat_fields(payload, now, leeway)
             if "nbf" in payload and options.get("verify_nbf", True):
                 self._validate_nbf_fields(payload, now, leeway)
-        if "exp" in payload and options.get("verify_exp", True):
-            self._validate_exp_fields(payload, now, leeway)
+            if "exp" in payload and options.get("verify_exp", True):
+                self._validate_exp_fields(payload, now, leeway)
         strict_aud = bool(options.get("strict_aud", False))
         if options.get("verify_aud", True):
-            if strict_aud or not (
-                rust_standard_claims and audience is not None
-            ):
+            if strict_aud or not rust_standard_claims:
                 self._validate_aud_field(
                     payload,
                     audience,
                     strict=strict_aud,
                 )
-        if options.get("verify_iss", True) and (
-            issuer is not None or not rust_standard_claims
-        ):
+        if options.get("verify_iss", True) and not rust_standard_claims:
             self._validate_iss_field(payload, issuer)
-        if options.get("verify_sub", True) and not (
-            rust_standard_claims and subject is not None
-        ):
+        if options.get("verify_sub", True) and not rust_standard_claims:
             self._validate_sub_field(payload, subject)
 
     @staticmethod
@@ -664,6 +684,20 @@ class PyJWT:
     def _validate_headers(
         header: dict[str, Any], options: dict[str, Any]
     ) -> None:
+        if "crit" in header:
+            crit = header["crit"]
+            if not isinstance(crit, list) or len(crit) == 0:
+                raise InvalidTokenError(
+                    "The 'crit' header parameter must be an array of strings"
+                )
+            for param in crit:
+                if not isinstance(param, str):
+                    raise InvalidTokenError("Items in 'crit' header must be strings")
+                if param == "b64" and header.get("b64") is False:
+                    continue
+                raise InvalidTokenError(
+                    f"Unsupported critical header parameter in 'crit': '{param}'"
+                )
         if options.get("verify_typ", False) or "typ" in options:
             expected_typ = options.get("typ")
             actual_typ = header.get("typ")
@@ -678,5 +712,6 @@ class PyJWT:
 
 _jwt = PyJWT()
 encode = _jwt.encode
+encode_json = _jwt.encode_json
 decode = _jwt.decode
 decode_complete = _jwt.decode_complete

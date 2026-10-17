@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from collections import OrderedDict
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 from urllib.parse import urlparse
 
 import orjson
@@ -40,14 +40,6 @@ def _merge_request_headers(extra: Mapping[str, Any] | None) -> dict[str, str]:
         for key, value in extra.items():
             headers[str(key)] = str(value)
     return headers
-
-
-def _header_to_plain_dict(obj: Any) -> dict[str, Any]:
-    raw = orjson.dumps(obj, default=str)
-    out = orjson.loads(raw)
-    if not isinstance(out, dict):
-        raise TypeError("expected JSON object for JWT header")
-    return out
 
 
 class PyJWKClient:
@@ -221,9 +213,7 @@ class PyJWKClient:
         algorithms: list[str] | None = None,
     ) -> PyJWK:
         token = jwt if isinstance(jwt, str) else jwt.decode("utf-8")
-        header: dict[str, Any] = _oxyjwt.get_unverified_header(token)  # type: ignore[assignment]
-        if not isinstance(header, dict):
-            header = _header_to_plain_dict(header)
+        header = cast("dict[str, Any]", _oxyjwt.get_unverified_header(token))
         if algorithms is not None:
             if not algorithms:
                 raise InvalidAlgorithmError(

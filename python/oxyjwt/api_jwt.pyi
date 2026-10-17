@@ -20,6 +20,13 @@ class PyJWT:
         json_encoder: type[JSONEncoder] | None = None,
         sort_headers: bool = True,
     ) -> str: ...
+    def encode_json(
+        self,
+        payload_json: str | bytes,
+        key: object,
+        algorithm: str | None = "HS256",
+        headers: dict[str, Any] | None = None,
+    ) -> str: ...
     def decode(
         self,
         jwt: str | bytes,
@@ -58,6 +65,12 @@ def encode(
     headers: dict[str, Any] | None = None,
     json_encoder: type[JSONEncoder] | None = None,
     sort_headers: bool = True,
+) -> str: ...
+def encode_json(
+    payload_json: str | bytes,
+    key: object,
+    algorithm: str | None = "HS256",
+    headers: dict[str, Any] | None = None,
 ) -> str: ...
 def decode(
     jwt: str | bytes,

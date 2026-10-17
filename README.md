@@ -169,6 +169,20 @@ print(token_data["signature"])
 
 ---
 
+### 5. Pre-Serialized High-Throughput Encoding (`encode_json`)
+
+For high-throughput pipelines where payloads are already serialized as JSON bytes or strings:
+
+```python
+import orjson
+import oxyjwt
+
+payload_bytes = orjson.dumps({"sub": "user_42", "exp": 1893456000})
+token = oxyjwt.encode_json(payload_bytes, "secret", algorithm="HS256")
+```
+
+---
+
 ## 🛡️ Exception Hierarchy
 
 OxyJWT provides a predictable exception tree that mirrors PyJWT for easy catch blocks:
