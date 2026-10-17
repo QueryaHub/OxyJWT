@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-10-17
+
+Performance and security release: zero-copy streaming claims deserialization,
+pre-encoded static headers, native fast-path claim validation in Rust, zero-copy
+header algorithm extraction, direct JWK deserialization, RFC 7515/7797 strict crit
+header enforcement, and public top-level `encode_json` export.
+
 ### Security
 
 - **Strict rejection of unrecognized `crit` (Critical) header parameters.**
@@ -49,6 +56,10 @@
 
 ### Added
 
+- **Top-level `encode_json` export with full typing and parity coverage.**
+  `encode_json` is now exported in the public API root (`oxyjwt.encode_json`) and on
+  `PyJWT.encode_json`, allowing callers who already serialize payloads to JSON
+  (such as via orjson) to avoid redundant dictionary deserialization (#148).
 - `DecodingKey.from_jwk`, `PyJWK`, and `PyJWKSet.from_json` now accept raw UTF-8
   `bytes` directly in addition to `str` and `Mapping[str, Any]`.
 

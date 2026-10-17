@@ -1,6 +1,6 @@
 """OxyJWT public API (PyJWT-shaped module surface)."""
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from ._oxyjwt import (
     DecodingKey,

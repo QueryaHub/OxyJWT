@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-17
+
 ### Security
 
 - **Strict rejection of unrecognized `crit` (Critical) header parameters.**
@@ -18,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
+- **Pre-encoded static base64 headers and native fast-path claim verification.**
+  In `encode` and `encode_json`, tokens with standard default headers now use
+  pre-encoded immutable base64 header slices, eliminating runtime `Header` JSON
+  serialization and base64 allocation. In `decode`, standard claim validations
+  (`iat`, unrequested `aud` rejection, and `sub` type checks) now execute entirely
+  within the Rust core, allowing the fast-path decode to return the claims dictionary
+  directly without redundant Python-side re-checks (#150).
 - **Eliminate triple JSON round-trip in `DecodingKey.from_jwk`.**
   Materializing a decoding key from a JWK Python dictionary now bypasses intermediate
   `serde_json::Value` DOM allocations and re-serialization. The dictionary is
@@ -47,6 +56,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Top-level `encode_json` export with full typing and parity coverage.**
+  `encode_json` is now exported in the public API root (`oxyjwt.encode_json`) and on
+  `PyJWT.encode_json`, allowing callers who already serialize payloads to JSON
+  (such as via orjson) to avoid redundant dictionary deserialization (#148).
 - `DecodingKey.from_jwk`, `PyJWK`, and `PyJWKSet.from_json` now accept raw UTF-8
   `bytes` directly in addition to `str` and `Mapping[str, Any]`.
 
@@ -466,7 +479,8 @@ Initial alpha release.
 - Mixed algorithm families are rejected for one decode call.
 - In 0.1.0, `verify_signature=False` was rejected in `decode` (0.2.0 allows an explicit unverified path).
 
-[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/QueryaHub/OxyJWT/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/QueryaHub/OxyJWT/compare/v0.5.0...v0.6.0
