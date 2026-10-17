@@ -5,7 +5,15 @@ import ssl
 from datetime import timedelta
 
 import oxyjwt
-from oxyjwt import DecodingKey, EncodingKey, PyJWK, PyJWKClient, PyJWKSet, PyJWT
+from oxyjwt import (
+    DecodingKey,
+    EncodingKey,
+    PyJWK,
+    PyJWKClient,
+    PyJWKSet,
+    PyJWT,
+    encode_json,
+)
 
 
 def exercise_public_api() -> None:
@@ -15,6 +23,13 @@ def exercise_public_api() -> None:
         algorithm="HS256",
         headers={"kid": "k1"},
     )
+    tok_json: str = encode_json(
+        b'{"sub": "user", "exp": 9999999999}',
+        "secret",
+        algorithm="HS256",
+        headers={"kid": "k1"},
+    )
+    _ = oxyjwt.encode_json('{"sub": "user"}', "secret")
     claims: dict[str, object] = oxyjwt.decode(
         tok,
         "secret",
@@ -33,6 +48,7 @@ def exercise_public_api() -> None:
 
     inst = PyJWT(options={"verify_exp": False})
     _ = inst.encode({"a": 1}, "secret")
+    _ = inst.encode_json('{"a": 1}', "secret")
     _ = inst.decode(tok, "secret", algorithms=["HS256"])
 
     enc = EncodingKey.from_secret(b"secret")

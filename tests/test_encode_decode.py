@@ -304,4 +304,75 @@ def test_decode_complex_claims_streaming_deserialization() -> None:
     assert decoded == payload
 
 
+def test_encode_json_str_payload() -> None:
+    payload_str = '{"sub": "user-1", "exp": 2000000000}'
+    token = oxyjwt.encode_json(payload_str, "secret", algorithm="HS256")
+    decoded = oxyjwt.decode(token, "secret", algorithms=["HS256"])
+    assert decoded["sub"] == "user-1"
+    assert decoded["exp"] == 2000000000
+
+
+def test_encode_json_bytes_payload() -> None:
+    payload_b = b'{"sub": "user-2", "role": "admin"}'
+    token = oxyjwt.encode_json(payload_b, "secret")
+    decoded = oxyjwt.decode(
+        token,
+        "secret",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded == {"sub": "user-2", "role": "admin"}
+
+
+def test_encode_json_with_headers_and_key_objects() -> None:
+    key = oxyjwt.EncodingKey.from_secret(b"secret-key-123456789012345678901234567890")
+    token = oxyjwt.encode_json(
+        '{"sub": "user-3"}',
+        key,
+        algorithm="HS256",
+        headers={"kid": "key-id-99", "typ": "JWT"},
+    )
+    header = oxyjwt.get_unverified_header(token)
+    assert header["kid"] == "key-id-99"
+    assert header["typ"] == "JWT"
+    decoded = oxyjwt.decode(
+        token,
+        "secret-key-123456789012345678901234567890",
+        algorithms=["HS256"],
+        options={"verify_exp": False},
+    )
+    assert decoded["sub"] == "user-3"
+
+
+def test_encode_json_pyjwt_class_instance() -> None:
+    inst = oxyjwt.PyJWT()
+    token = inst.encode_json('{"sub": "user-4"}', "secret")
+    decoded = inst.decode(token, "secret", algorithms=["HS256"], options={"verify_exp": False})
+    assert decoded["sub"] == "user-4"
+
+
+def test_encode_json_whitespace_tolerance() -> None:
+    token = oxyjwt.encode_json("  \n\t {\"sub\": \"ws\"} \r\n ", "secret")
+    decoded = oxyjwt.decode(token, "secret", algorithms=["HS256"], options={"verify_exp": False})
+    assert decoded["sub"] == "ws"
+
+
+def test_encode_json_invalid_payload_error() -> None:
+    for invalid in ["[1, 2, 3]", "123", '"just-a-string"', "", "   "]:
+        with pytest.raises(oxyjwt.EncodeError, match="Expecting a dict object"):
+            oxyjwt.encode_json(invalid, "secret")
+
+    with pytest.raises(oxyjwt.EncodeError, match="payload_json must be a UTF-8 str or bytes"):
+        oxyjwt.encode_json(12345, "secret")  # type: ignore[arg-type]
+
+    with pytest.raises(oxyjwt.EncodeError, match="payload_json must be a UTF-8 str or bytes"):
+        oxyjwt.encode_json({"sub": "dict"}, "secret")  # type: ignore[arg-type]
+
+
+def test_encode_json_algorithm_override_rejected() -> None:
+    with pytest.raises(oxyjwt.InvalidAlgorithmError, match="cannot override"):
+        oxyjwt.encode_json('{"sub": "u"}', "secret", algorithm="HS256", headers={"alg": "RS256"})
+
+
+
 
