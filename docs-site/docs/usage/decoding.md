@@ -145,6 +145,15 @@ Supported options:
 
     `decode_unverified` and `get_unverified_header` are for inspection and debugging only; they skip cryptographic verification entirely.
 
+## Critical Header Parameters (`crit`)
+
+Under RFC 7515 §4.1.11 and RFC 7797, any header parameter listed in the `crit` header array must be understood and processed by the recipient.
+
+OxyJWT strictly enforces this requirement:
+- When a token contains `b64` in `crit`, OxyJWT processes it according to RFC 7797 detached payload rules.
+- If a token contains unrecognized critical header extensions, or if `crit` is empty, malformed, or references reserved standard headers, OxyJWT rejects the token with `DecodeError`.
+- This protection applies to both verified `decode` and unverified helpers (`decode_unverified` and `decode_complete(options={"verify_signature": False})`) to prevent parser differential security bypasses.
+
 ## Unverified Helpers
 
 These helpers do not authenticate a token:
@@ -154,4 +163,5 @@ header = oxyjwt.get_unverified_header(token)
 claims = oxyjwt.decode_unverified(token)
 ```
 
-Use them for debugging, key lookup, or inspection flows. Never use their output to authorize a request.
+Use them for debugging, key lookup, or inspection flows. Never use their output to authorize a request. Both helpers run synchronously attached to the GIL with sub-microsecond latency.
+

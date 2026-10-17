@@ -28,6 +28,21 @@ Raises:
 - `InvalidAlgorithmError` for unsupported algorithms or `alg` header overrides.
 - `InvalidKeyError` for invalid key material.
 
+## `encode_json`
+
+```python
+def encode_json(
+    payload_json: str | bytes,
+    key: str | bytes | EncodingKey,
+    algorithm: str = "HS256",
+    headers: Mapping[str, Any] | None = None,
+) -> str: ...
+```
+
+High-performance signing variant that accepts an already-serialized JSON payload as `str` or `bytes`. Bypasses Python dictionary serialization and reflection. For HMAC algorithms, the borrowed byte slice is signed directly without heap cloning.
+
+Raises the same exceptions as `encode`.
+
 ## `decode`
 
 ```python
@@ -140,10 +155,61 @@ class DecodingKey:
     def from_ed_pem(pem: str | bytes) -> DecodingKey: ...
 
     @staticmethod
-    def from_jwk(jwk: str | Mapping[str, Any]) -> DecodingKey: ...
+    def from_jwk(jwk: str | bytes | Mapping[str, Any]) -> DecodingKey: ...
 ```
 
-Use `DecodingKey` for verifying tokens.
+Use `DecodingKey` for verifying tokens. `from_jwk` accepts a Python dictionary, JSON string, or UTF-8 JSON bytes (with zero-copy single-pass parsing).
+
+## `PyJWK`
+
+```python
+class PyJWK:
+    def __init__(
+        self,
+        jwk: Mapping[str, Any] | str | bytes,
+        algorithm: str | None = None,
+    ) -> None: ...
+
+    @staticmethod
+    def from_dict(obj: Mapping[str, Any], algorithm: str | None = None) -> PyJWK: ...
+
+    @staticmethod
+    def from_json(data: str | bytes, algorithm: str | None = None) -> PyJWK: ...
+
+    @property
+    def key(self) -> DecodingKey: ...
+
+    @property
+    def key_id(self) -> str | None: ...
+
+    @property
+    def key_type(self) -> str | None: ...
+
+    @property
+    def public_key_use(self) -> str | None: ...
+```
+
+Represents a single parsed JSON Web Key. The underlying `DecodingKey` is lazily materialized when `.key` is first accessed. Keys with `use: enc` are rejected with `PyJWKError`.
+
+## `PyJWKSet`
+
+```python
+class PyJWKSet:
+    def __init__(self, keys: list[dict[str, Any]]) -> None: ...
+
+    @staticmethod
+    def from_dict(obj: dict[str, Any]) -> PyJWKSet: ...
+
+    @staticmethod
+    def from_json(data: str | bytes) -> PyJWKSet: ...
+
+    @property
+    def keys(self) -> list[PyJWK]: ...
+
+    def __getitem__(self, kid: str) -> PyJWK: ...
+```
+
+Represents a set of JWKs (RFC 7517). Supports fast $O(1)$ key lookup by `kid` via `keyset[kid]`. Keys designated for encryption are automatically skipped with `PyJWKSetSkipWarning`.
 
 ## `PyJWKClient`
 
