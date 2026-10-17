@@ -11,10 +11,6 @@ pub fn py_to_json_for_encode(value: &Bound<'_, PyAny>) -> PyResult<Value> {
     py_to_json(value).map_err(|err| errors::encode_error(err.to_string()))
 }
 
-pub fn py_to_json_for_decode(value: &Bound<'_, PyAny>) -> PyResult<Value> {
-    py_to_json(value).map_err(|err| errors::decode_error(err.to_string()))
-}
-
 pub fn json_to_py(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
     json_to_bound(py, value).map(|value| value.unbind())
 }
