@@ -173,6 +173,16 @@ class PyJWT:
             )
         return _oxyjwt.encode_json(body_b, key, alg, headers)
 
+    def encode_json(
+        self,
+        payload_json: str | bytes,
+        key: object,
+        algorithm: str | None = "HS256",
+        headers: dict[str, Any] | None = None,
+    ) -> str:
+        alg = algorithm if algorithm is not None else "HS256"
+        return _oxyjwt.encode_json(payload_json, key, alg, headers)
+
     def decode(
         self,
         jwt: str | bytes,
@@ -719,5 +729,6 @@ class PyJWT:
 
 _jwt = PyJWT()
 encode = _jwt.encode
+encode_json = _jwt.encode_json
 decode = _jwt.decode
 decode_complete = _jwt.decode_complete
