@@ -7,7 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-(No changes yet.)
+### Security
+
+- **Strict rejection of unrecognized `crit` (Critical) header parameters.**
+  Under RFC 7515 §4.1.11 and RFC 7797, any header parameter listed in the `crit`
+  header array must be understood and processed. OxyJWT now strictly validates
+  `crit` on both verified and unverified decode paths: unrecognized critical
+  extensions, empty `crit` lists, malformed structures, or critical references
+  to standard reserved headers immediately raise `DecodeError` (#132).
+
+### Performance
+
+- **Eliminate triple JSON round-trip in `DecodingKey.from_jwk`.**
+  Materializing a decoding key from a JWK Python dictionary now bypasses intermediate
+  `serde_json::Value` DOM allocations and re-serialization. The dictionary is
+  serialized directly in C via `orjson.dumps`, and parsed into `jsonwebtoken::jwk::Jwk`
+  in a single pass. `DecodingKey.from_jwk` also accepts `&str`, `&[u8]` (`bytes`),
+  and `bytearray` natively with zero-copy deserialization. Benchmark speedup:
+  10× faster for octet/HMAC keys (0.97 µs vs 9.66 µs) and 21× faster for RSA keys
+  (1.21 µs vs 25.48 µs) (#140).
+- **Avoid redundant payload copying in `encode_json` and trim `py.detach` overhead.**
+  In `encode_json`, the JWS signing input is now built directly from the borrowed
+  payload byte slice without an owned `payload_bytes.to_vec()` heap clone.
+  Non-cryptographic sub-microsecond paths (`get_unverified_header` and
+  `decode_unverified`) now run synchronously attached to the GIL, eliminating
+  repeated `PyEval_SaveThread` / `PyEval_RestoreThread` cycles (#139).
+- **Zero-copy header algorithm extraction & static header fast-path.**
+  Decode paths avoid full JSON DOM parsing when only the algorithm is needed.
+  Standard compact headers (`{"typ":"JWT","alg":"..."}`, `{"alg":"...","typ":"JWT"}`,
+  `{"alg":"..."}`) are recognized in a single string match without base64 or JSON
+  decoding. Non-standard headers extract `alg` via a streaming serde visitor
+  without allocating a `serde_json::Map<String, Value>` (#138).
+- **Streaming claims deserialization into `PyDict`.**
+  Deserialization of claims in `decode_complete` directly streams serde JSON tokens
+  into a `PyDict` without allocating an intermediate `serde_json::Value` tree (#137).
+- **Fast-path native validation for `aud`, `iss`, and `sub`.**
+  Extended the in-Rust fast-path decoder to validate audience, issuer, and subject
+  claims directly in Rust, reducing Python fallback overhead (#136).
+
+### Added
+
+- `DecodingKey.from_jwk`, `PyJWK`, and `PyJWKSet.from_json` now accept raw UTF-8
+  `bytes` directly in addition to `str` and `Mapping[str, Any]`.
 
 ## [0.8.0] — 2026-09-28
 

@@ -97,3 +97,30 @@ token = oxyjwt.encode(
 OxyJWT does not allow `headers["alg"]` to override the `algorithm` argument.
 
 Supported built-in header fields: `typ`, `cty`, `kid`, `jku`, `x5u`, `x5t`, `x5t#S256`, `url`, and `nonce`. Any other **string** name is emitted as a custom JWS header parameter (for example `X-Trace-Id`). Custom values must be strings; complex fields such as `jwk` and `x5c` are not accepted in `headers`.
+
+## High-Throughput `encode_json`
+
+When your application already holds a pre-serialized JSON string or UTF-8 bytes (for example, produced by `orjson.dumps()`, cached payloads, or streaming pipelines), use `oxyjwt.encode_json` to bypass dictionary serialization overhead in Python:
+
+```python
+import orjson
+import oxyjwt
+
+# Pre-serialized payload bytes
+payload_bytes = orjson.dumps({
+    "sub": "user-123",
+    "role": "admin",
+    "exp": 1893456000,
+})
+
+# Directly sign without re-serializing
+token = oxyjwt.encode_json(
+    payload_bytes,
+    "super-secret",
+    algorithm="HS256",
+    headers={"kid": "key-1"},
+)
+```
+
+`encode_json` accepts `payload_json` as either `str` or `bytes`. For HMAC signing, the Rust core borrows the byte slice directly to construct the JWS signing input with zero redundant heap copying.
+

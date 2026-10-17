@@ -43,14 +43,42 @@ The signing side usually uses a private key. The verification side usually uses 
 
 ## JWK Verification
 
-`DecodingKey.from_jwk` creates a verification key from a JSON Web Key:
+`DecodingKey.from_jwk` creates a verification key from a JSON Web Key (RFC 7517). It accepts:
+- a Python `dict` / `Mapping[str, Any]` (for example `{"kty": "RSA", "n": "...", "e": "AQAB"}`)
+- a JSON `str`
+- raw UTF-8 JSON `bytes` or `bytearray`
 
 ```python
-verification_key = oxyjwt.DecodingKey.from_jwk(jwk)
+# Direct from dictionary
+verification_key = oxyjwt.DecodingKey.from_jwk(jwk_dict)
+
+# Direct from raw JSON bytes (zero-copy single-pass parse)
+verification_key = oxyjwt.DecodingKey.from_jwk(b'{"kty":"RSA","n":"...","e":"AQAB"}')
+
 claims = oxyjwt.decode(token, verification_key, algorithms=["RS256"])
 ```
 
-The current API supports JWK for decoding. Encoding uses explicit secret or PEM constructors.
+### `PyJWK` and `PyJWKSet`
+
+For PyJWT-compatible workflows, use `PyJWK` and `PyJWKSet`:
+
+```python
+from oxyjwt import PyJWK, PyJWKSet
+
+# Single JWK from dict, JSON str, or raw bytes
+jwk = PyJWK.from_dict({"kty": "RSA", "kid": "k1", "n": "...", "e": "AQAB"})
+# Or from JSON: PyJWK.from_json(jwks_json_str_or_bytes)
+
+claims = oxyjwt.decode(token, jwk.key, algorithms=["RS256"])
+
+# JWKS Keyset
+keyset = PyJWKSet.from_dict({"keys": [jwk_dict]})
+signing_key = keyset["k1"]  # lookup by kid
+claims = oxyjwt.decode(token, signing_key.key, algorithms=["RS256"])
+```
+
+`PyJWKSet` lazily materializes `DecodingKey` instances only for keys that are actually accessed, and automatically ignores keys designated for encryption (`use: enc`).
+
 
 ## Why Raw Keys Are HMAC-Only
 
