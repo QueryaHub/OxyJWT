@@ -37,12 +37,12 @@ Measured on modern Linux hardware comparing median operations per second (`ops/s
 <!-- BENCHMARK_TABLE_START -->
 | Algorithm | Operation | OxyJWT | PyJWT | Authlib | python-jose | OxyJWT Speedup |
 | :--- | :--- | ---: | ---: | ---: | ---: | :---: |
-| **HS256** | **Encode** | **629,636** | 60,783 | 56,940 | 76,379 | **~10.4× faster** 🚀 |
-| **HS256** | **Decode** | **465,317** | 36,046 | 55,379 | 37,767 | **~12.9× faster** 🚀 |
-| **EdDSA** | **Encode** | **70,176** | 17,349 | 13,237 | *N/A* | **~4.0× faster** 🚀 |
-| **EdDSA** | **Decode** | **32,791** | 9,297 | 10,031 | *N/A* | **~3.5× faster** 🚀 |
-| **RS256** | **Decode** | **54,533** | 18,796 | 24,147 | 20,229 | **~2.9× faster** 🚀 |
-| **ES256** | **Encode** | **41,395** | 18,131 | 15,224 | 18,259 | **~2.3× faster** 🚀 |
+| **HS256** | **Encode** | **454,398** | 31,089 | 39,157 | 48,473 | **~14.6× faster** 🚀 |
+| **HS256** | **Decode** | **298,219** | 19,158 | 35,922 | 20,121 | **~15.6× faster** 🚀 |
+| **EdDSA** | **Encode** | **49,099** | 11,085 | 8,330 | *N/A* | **~4.4× faster** 🚀 |
+| **EdDSA** | **Decode** | **22,474** | 6,157 | 6,239 | *N/A* | **~3.7× faster** 🚀 |
+| **RS256** | **Decode** | **41,887** | 9,421 | 11,470 | 9,762 | **~4.4× faster** 🚀 |
+| **ES256** | **Encode** | **31,323** | 9,254 | 7,222 | 8,949 | **~3.4× faster** 🚀 |
 <!-- BENCHMARK_TABLE_END -->
 
 > [!NOTE]
